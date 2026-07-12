@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>I.R.I.S. — Institut de Recherche et d'Investigation Surnaturelle</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%91%81%EF%B8%8F%3C/text%3E%3C/svg%3E">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&family=Special+Elite&family=VT323&display=swap" rel="stylesheet">
+
+    <!-- PDF.js & Page-Flip -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/page-flip@2.0.7/dist/js/page-flip.browser.min.js"></script>
+
+    <style>
+        :root {
+            --iris-amber: #ffd900;
+            --iris-red: #ff3b3b;
+            --iris-bg-deep: #030604;
+            --grimoire-ink: #3e2723;
+            --grimoire-parchment: #f2e8c9;
+            --grimoire-brass: #8d6e63;
+        }
+
+        html, body { background: #000; }
+
+        /* ---------- THÈMES ---------- */
+        .theme-rapport {
+            font-family: 'Share Tech Mono', monospace;
+            background: radial-gradient(circle, #0c1811 0%, #030604 100%);
+            color: var(--iris-amber);
+        }
+        .theme-livre {
+            font-family: 'Cinzel', serif;
+            background: radial-gradient(circle, #2d1b10 0%, #110803 100%);
+            color: #f5f5dc;
+        }
+        .iris { color: var(--iris-amber); background: black; }
+        .font-terminal { font-family: 'VT323', 'Share Tech Mono', monospace; }
+        .font-ui { font-family: 'Orbitron', sans-serif; }
+        .font-stamp { font-family: 'Special Elite', monospace; }
+
+        /* ---------- OVERLAYS D'AMBIANCE ---------- */
+        .crt::after {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.15) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+            z-index: 999;
+            background-size: 100% 4px, 3px 100%;
+            pointer-events: none;
+        }
+        .crt { animation: crtFlicker 6s infinite; }
+        @keyframes crtFlicker {
+            0%, 100% { opacity: 1; }
+            92% { opacity: 1; }
+            93% { opacity: .94; }
+            94% { opacity: 1; }
+            96% { opacity: .97; }
+        }
+
+        #hud-grid {
+            background-image:
+                linear-gradient(rgba(255, 217, 0, 0.06) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 217, 0, 0.06) 1px, transparent 1px);
+            background-size: 30px 30px;
+        }
+
+        .hazard-stripes {
+            background-image: repeating-linear-gradient(45deg, var(--iris-amber) 0 10px, #000 10px 20px);
+        }
+
+        .parchment {
+            background-color: #f2e8c9;
+            background-image: radial-gradient(circle, rgba(255,255,255,0.3) 0%, rgba(0,0,0,0.08) 100%), url('https://www.transparenttextures.com/patterns/parchment.png');
+            box-shadow: inset 0 0 50px rgba(101,67,33,0.25);
+        }
+
+        .flip-book { box-shadow: 0 40px 90px rgba(0,0,0,0.9); background: transparent; transition: transform .3s ease; }
+        .page { background-color: white; overflow: hidden; box-sizing: border-box; }
+        .page-content { width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: space-between; position: relative; }
+
+        ::-webkit-scrollbar { display: none; }
+        * { -ms-overflow-style: none; scrollbar-width: none; }
+
+        /* ---------- SIGLE ---------- */
+        .iris-sigil-glow { filter: drop-shadow(0 0 6px currentColor); animation: sigilPulse 3.2s ease-in-out infinite; }
+        @keyframes sigilPulse {
+            0%, 100% { filter: drop-shadow(0 0 4px currentColor); opacity: .85; }
+            50% { filter: drop-shadow(0 0 12px currentColor); opacity: 1; }
+        }
+
+        /* ---------- MARQUEE D'AVERTISSEMENT ---------- */
+        @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+        .marquee { display: inline-block; animation: marquee 22s linear infinite; will-change: transform; }
+
+        /* ---------- CARTES DE CLASSIFICATION ---------- */
+        .doc-type-card {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            padding: 14px 8px; border: 1px solid currentColor; border-radius: 6px;
+            background: rgba(0,0,0,0.45); cursor: pointer; transition: all .2s ease; color: inherit;
+        }
+        .doc-type-card:hover { background: rgba(255,255,255,0.07); transform: translateY(-1px); }
+        .doc-type-card.active {
+            background: var(--iris-amber); color: #000;
+            box-shadow: 0 0 22px rgba(255,217,0,0.55);
+        }
+
+        /* ---------- ALERTE / TAMPON ---------- */
+        @keyframes alertFlash { 0% { opacity: 0; } 20% { opacity: 1; } 100% { opacity: 0; } }
+        .alert-flash-anim { animation: alertFlash .7s ease-out; }
+
+        @keyframes stampSlam {
+            0% { transform: scale(2.6) rotate(-9deg); opacity: 0; }
+            55% { transform: scale(.9) rotate(-9deg); opacity: 1; }
+            75% { transform: scale(1.06) rotate(-9deg); }
+            100% { transform: scale(1) rotate(-9deg); opacity: 1; }
+        }
+        .stamp-slam { animation: stampSlam .45s ease-out forwards; }
+
+        /* ---------- GLITCH TITRE ---------- */
+        .glitch-active {
+            text-shadow: 2px 0 #ff3b3b, -2px 0 #00e5ff;
+        }
+
+        /* ---------- BOOT SCREEN ---------- */
+        #screen-boot { background: #000; color: var(--iris-amber); }
+        .boot-cursor::after {
+            content: "█"; margin-left: 2px; animation: blink 1s step-end infinite;
+        }
+        @keyframes blink { 50% { opacity: 0; } }
+    </style>
+</head>
+<body class="theme-rapport h-screen w-screen overflow-hidden relative transition-all duration-700 ease-in-out">
+
+    <div id="crt-overlay" class="crt absolute inset-0 pointer-events-none z-50"></div>
+    <div id="hud-grid" class="fixed inset-0 pointer-events-none opacity-60 z-0"></div>
+    <div id="alert-flash" class="hidden fixed inset-0 bg-red-600/30 z-40 pointer-events-none"></div>
+
+    <!-- MODALE D'ERREUR -->
+    <div id="modal-error" class="hidden fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-50 transition-all duration-300">
+        <div id="modal-content" class="max-w-md w-full p-6 rounded-lg text-center shadow-2xl transform scale-95 transition-transform border border-current bg-black text-current">
+            <i class="fa-solid fa-triangle-exclamation text-4xl mb-4 animate-bounce text-red-500"></i>
+            <h3 class="text-xl font-bold uppercase mb-2 text-red-500 font-ui" id="modal-title">Alerte Système</h3>
+            <p class="text-sm opacity-80 mb-6 font-bold uppercase tracking-wider" id="modal-desc">Une erreur inconnue s'est produite lors de l'accès aux données.</p>
+            <button onclick="closeModal()" class="px-6 py-2 border border-current rounded uppercase text-xs font-bold hover:bg-white/10 transition-all">Fermer</button>
+        </div>
+    </div>
+
+    <!-- 0. SÉQUENCE DE DÉMARRAGE -->
+    <div id="screen-boot" class="flex flex-col justify-center items-center h-full w-full px-6 text-center z-30 relative">
+        <svg id="boot-sigil" class="w-16 h-16 mb-6 opacity-0 transition-opacity duration-700 iris-sigil-glow" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polygon points="50,6 94,90 6,90" />
+            <circle cx="50" cy="64" r="17" />
+            <circle cx="50" cy="64" r="5" fill="currentColor" />
+            <line x1="50" y1="6" x2="50" y2="30" stroke-dasharray="2 4" />
+        </svg>
+        <pre id="boot-log" class="font-terminal text-sm md:text-base leading-relaxed max-w-xl w-full whitespace-pre-wrap text-left"></pre>
+    </div>
+
+    <!-- 1. PORTAIL D'ACCUEIL -->
+    <div id="screen-choice" class="hidden flex-col justify-center items-center h-full w-full px-6 text-center transition-all duration-500 z-10 relative">
+        <div class="w-full max-w-2xl p-8 md:p-12 rounded-xl border border-current bg-black/40 shadow-[0_0_30px_rgba(255,217,0,0.15)] flex flex-col items-center">
+
+            <div class="w-full flex justify-between items-end border-b border-current/30 pb-4 mb-6">
+                <div class="text-left flex items-center gap-3">
+                    <svg class="w-8 h-8 md:w-10 md:h-10 iris-sigil-glow shrink-0" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="3">
+                        <polygon points="50,6 94,90 6,90" />
+                        <circle cx="50" cy="64" r="17" />
+                        <circle cx="50" cy="64" r="5" fill="currentColor" />
+                    </svg>
+                    <div>
+                        <h1 id="portal-title" class="text-2xl md:text-5xl font-black tracking-widest uppercase font-ui">I.R.I.S.</h1>
+                        <p class="text-[9px] md:text-xs opacity-70 tracking-widest uppercase">Institut de Recherche et d'Investigation Surnaturelle</p>
+                    </div>
+                </div>
+                <div class="text-right flex flex-col items-end shrink-0">
+                    <i class="fa-solid fa-user-shield text-2xl md:text-3xl opacity-80 mb-1"></i>
+                    <p class="text-[8px] md:text-[10px] tracking-widest uppercase font-bold text-green-500 animate-pulse">CONNECTÉ</p>
+                </div>
+            </div>
+
+            <div class="overflow-hidden whitespace-nowrap border-y border-current/30 py-1.5 mb-6 w-full">
+                <div class="marquee text-[9px] tracking-[0.3em] uppercase opacity-70">
+                    AVERTISSEMENT — ACCÈS NON AUTORISÉ INTERDIT — TOUTE TENTATIVE EST CONSIGNÉE — ART. 12 DU PROTOCOLE DE SECRET DÉFENSE — CLASSIFICATION IRIS-Ω — &nbsp;&nbsp;&nbsp;&nbsp;
+                    AVERTISSEMENT — ACCÈS NON AUTORISÉ INTERDIT — TOUTE TENTATIVE EST CONSIGNÉE — ART. 12 DU PROTOCOLE DE SECRET DÉFENSE — CLASSIFICATION IRIS-Ω — &nbsp;&nbsp;&nbsp;&nbsp;
+                </div>
+            </div>
+
+            <div class="bg-black/60 border border-current/30 p-4 rounded mb-8 w-full text-left flex items-center justify-between">
+                <div>
+                    <p class="text-[10px] uppercase opacity-70">Utilisateur Actuel</p>
+                    <p class="font-bold tracking-widest">INVITÉ_7482</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-[10px] uppercase opacity-70">Habilitation</p>
+                    <p class="font-bold tracking-widest text-red-500">NIVEAU 2 (RESTREINT)</p>
+                </div>
+            </div>
+
+            <button onclick="initPortal()" class="group flex items-center justify-center gap-4 p-5 border-2 border-current bg-current text-black hover:bg-transparent hover:text-current rounded transition-all duration-300 w-full font-black tracking-widest uppercase text-sm font-ui">
+                <i class="fa-solid fa-download text-2xl group-hover:animate-bounce iris"></i>
+                <span class="iris">Accéder aux archives classifiées</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- 2. AUTHENTIFICATION -->
+    <div id="screen-auth" class="hidden flex-col justify-center items-center h-full w-full px-6 transition-all duration-500 z-10 relative">
+        <div id="auth-box" class="relative w-full max-w-md p-8 rounded-xl border border-current bg-black/85 shadow-[0_0_35px_rgba(255,217,0,0.15)] flex flex-col justify-center">
+
+            <div id="denied-stamp" class="hidden absolute inset-0 flex items-center justify-center pointer-events-none z-30">
+                <div class="border-4 border-red-600 text-red-600 font-stamp text-xl md:text-2xl uppercase tracking-widest px-6 py-3 rotate-[-9deg] bg-black/80">Accès Refusé</div>
+            </div>
+
+            <h2 id="auth-title" class="text-xl font-black mb-6 tracking-wider text-center uppercase font-ui">Protocole de Récupération d'Archive</h2>
+
+            <div class="flex flex-col gap-5 mb-6">
+                <div>
+                    <label class="block text-[10px] uppercase tracking-widest mb-2 opacity-70">Classification du document</label>
+                    <div id="doc-type-grid" class="grid grid-cols-2 gap-3">
+                        <p class="col-span-2 text-center text-xs uppercase opacity-60 tracking-widest py-4">Chargement des classifications...</p>
+                    </div>
+                </div>
+
+                <div class="relative">
+                    <label class="block text-[10px] uppercase tracking-widest mb-1 opacity-70">Code d'autorisation</label>
+                    <input type="password" id="access-code" placeholder="••••••••" onkeydown="if(event.key==='Enter') validateCode();" class="w-full px-4 py-3 bg-black/60 border border-current rounded focus:outline-none focus:ring-1 focus:ring-current text-center tracking-widest text-lg font-bold">
+                </div>
+
+                <p id="error-msg" class="text-red-500 text-[10px] text-center uppercase hidden font-bold mt-1"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Échec. Code ou classification incorrects.</p>
+            </div>
+
+            <div class="flex flex-col gap-3">
+                <button onclick="validateCode()" class="iris w-full py-3 font-black hover:bg-transparent hover:text-current border border-current transition-all uppercase tracking-widest text-xs rounded font-ui">Déchiffrer l'archive</button>
+                <button onclick="goBack()" class="iris w-full py-2 text-xs opacity-60 hover:opacity-100 transition-all uppercase font-bold mt-2">Annuler et retourner au poste de contrôle</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. CHARGEMENT -->
+    <div id="screen-loading" class="hidden flex-col justify-center items-center h-full w-full px-6 text-center z-10 relative">
+        <div class="relative w-24 h-24 mb-6">
+            <div class="absolute inset-0 rounded-full border-2 border-current opacity-10"></div>
+            <div class="absolute inset-0 rounded-full border-2 border-t-transparent border-current animate-spin"></div>
+            <div class="absolute inset-4 rounded-full border border-dashed border-current opacity-30 animate-[spin_10s_linear_infinite]"></div>
+            <i class="fa-solid fa-database absolute inset-0 flex items-center justify-center text-xl animate-pulse" id="loading-icon"></i>
+        </div>
+        <div id="terminal-log" class="w-full max-w-md h-44 overflow-y-auto bg-black/60 border border-current/30 rounded p-3 text-left font-terminal text-sm leading-relaxed"></div>
+    </div>
+
+    <!-- 4. VISIONNEUSE -->
+    <div id="screen-viewer" class="hidden flex-col justify-between h-full w-full p-3 md:p-6 relative z-10">
+
+        <div id="classification-stamp" class="pointer-events-none absolute z-20 select-none"></div>
+
+        <div id="top-bar" class="flex justify-between items-center w-full z-10 px-4 py-3 rounded-lg border bg-black/30 backdrop-blur-md transition-colors">
+            <button onclick="goBack()" class="px-3 py-1.5 border border-current rounded hover:bg-white/10 transition-all uppercase text-[10px] font-bold">
+                <i class="fa-solid fa-power-off mr-2"></i> Fermer
+            </button>
+
+            <div class="flex items-center gap-4">
+                <div id="document-info" class="text-[10px] tracking-widest uppercase font-bold text-center hidden md:block opacity-80"></div>
+                <div class="hidden md:flex items-center gap-2 text-[9px] tracking-widest uppercase opacity-60 border-l border-current/20 pl-4">
+                    <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                    <span>ENREGISTREMENT ACTIF</span>
+                    <span id="session-clock" class="font-terminal text-xs">00:00:00</span>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <button onclick="toggleMute()" id="btn-mute" class="p-2 hover:opacity-100 opacity-60 transition-opacity" title="Activer/Désactiver le son">
+                    <i class="fa-solid fa-volume-high text-sm"></i>
+                </button>
+                <button onclick="toggleFullScreen()" class="p-2 hover:opacity-100 opacity-60 transition-opacity" title="Plein écran">
+                    <i class="fa-solid fa-expand text-sm"></i>
+                </button>
+                <span id="page-counter" class="text-[10px] font-bold tracking-wider ml-2 border-l pl-3 border-current/20">-- / --</span>
+            </div>
+        </div>
+
+        <div class="flex-grow flex justify-center items-center my-4 overflow-hidden relative w-full">
+            <div id="book-container" class="relative transition-all duration-500 flex justify-center items-center w-full h-full">
+                <div id="book" class="flip-book"></div>
+            </div>
+        </div>
+
+        <div id="viewer-nav-bar" class="flex justify-between items-center max-w-lg w-full mx-auto gap-4 z-10 py-2 px-4 rounded-full border bg-black/30 backdrop-blur-md">
+            <button onclick="firstPage()" class="p-2 hover:opacity-100 opacity-60 transition-all" title="Première page">
+                <i class="fa-solid fa-angles-left text-sm"></i>
+            </button>
+            <button onclick="prevPage()" class="p-2.5 border border-current rounded-full hover:bg-white/10 transition-all" title="Page précédente">
+                <i class="fa-solid fa-chevron-left text-sm"></i>
+            </button>
+            <span class="text-[9px] uppercase tracking-widest opacity-60 text-center font-bold hidden sm:inline">Glissez ou utilisez vos flèches clavier</span>
+            <button onclick="nextPage()" class="p-2.5 border border-current rounded-full hover:bg-white/10 transition-all" title="Page suivante">
+                <i class="fa-solid fa-chevron-right text-sm"></i>
+            </button>
+            <button onclick="lastPage()" class="p-2 hover:opacity-100 opacity-60 transition-all" title="Dernière page">
+                <i class="fa-solid fa-angles-right text-sm"></i>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const _0x4a2b = "==gdzNWP0VHc0V3bmUWdyRXPlx2Zul2cmATPkl2Z/IWdw9yMzJFeIZ3MV5UO5JFNUxkSfRHdKZlerJ1VqZTTGFTaxYjMIplUS52dGRlcJV2SwcGa24kZxwmUphXQodEW0MWYrlmbOlzVoF0dnlmUIFldx0CWDFEUy8SZvQ2LzRXZlh2ckFWZyB3cv02bj5SZsd2bvdmLzN2bk9yL6MHc0RHa";
+
+        let currentType = '';
+        let selectedDocType = '';
+        let typeLabelMap = {};
+        let flipBookInstance = null;
+        let pdfInstance = null;
+        let audioCtx = null;
+        let isMuted = false;
+        let totalPagesCount = 0;
+        let csvDataCache = [];
+        let clockInterval = null;
+
+        function _getDbUrl() {
+            try {
+                return atob(_0x4a2b.split('').reverse().join(''));
+            } catch (e) { return ''; }
+        }
+
+        // ---------------- AUDIO ----------------
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        function playBeep(freq = 600, duration = 0.08) {
+            if (!audioCtx || isMuted) return;
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            osc.frequency.value = freq;
+            osc.type = isBookType(currentType) ? 'triangle' : 'sine';
+
+            gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        }
+
+        function playPaperSound() {
+            if (!audioCtx || isMuted) return;
+            const bufferSize = audioCtx.sampleRate * 0.4;
+            const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) { data[i] = Math.random() * 2 - 1; }
+
+            const noise = audioCtx.createBufferSource();
+            noise.buffer = buffer;
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'bandpass'; filter.frequency.value = 850; filter.Q.value = 1.4;
+            const gain = audioCtx.createGain();
+
+            noise.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+            gain.gain.setValueAtTime(0, audioCtx.currentTime);
+            gain.gain.linearRampToValueAtTime(0.04, audioCtx.currentTime + 0.05);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
+
+            filter.frequency.setValueAtTime(1200, audioCtx.currentTime);
+            filter.frequency.exponentialRampToValueAtTime(280, audioCtx.currentTime + 0.35);
+            noise.start();
+        }
+
+        function playSiren() {
+            playBeep(220, 0.25);
+            setTimeout(() => playBeep(180, 0.3), 150);
+        }
+
+        function toggleMute() {
+            isMuted = !isMuted;
+            const btn = document.getElementById('btn-mute');
+            if (isMuted) {
+                btn.innerHTML = '<i class="fa-solid fa-volume-xmark text-sm"></i>';
+                btn.classList.add('text-red-500');
+            } else {
+                btn.innerHTML = '<i class="fa-solid fa-volume-high text-sm"></i>';
+                btn.classList.remove('text-red-500');
+                initAudio();
+                playBeep(600, 0.05);
+            }
+        }
+
+        // ---------------- HELPERS ----------------
+        function isBookType(type) {
+            return /livre|grimoire|artefact/i.test(type || '');
+        }
+
+        function iconForType(type) {
+            const t = (type || '').toLowerCase();
+            if (t.includes('rapport')) return 'fa-file-shield';
+            if (t.includes('grimoire')) return 'fa-book-skull';
+            if (t.includes('livre')) return 'fa-book';
+            if (t.includes('artefact')) return 'fa-gem';
+            if (t.includes('humain') || t.includes('sujet')) return 'fa-user-lock';
+            return 'fa-folder-closed';
+        }
+
+        function pseudoCode(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+            }
+            const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789';
+            let code = '';
+            let h = hash;
+            for (let i = 0; i < 4; i++) {
+                code += alphabet[h % alphabet.length];
+                h = Math.floor(h / alphabet.length);
+            }
+            return 'IRIS-' + code;
+        }
+
+        function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+        function showErrorModal(title, message) {
+            const modal = document.getElementById('modal-error');
+            document.getElementById('modal-title').innerText = title;
+            document.getElementById('modal-desc').innerText = message;
+            modal.classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('modal-error').classList.add('hidden');
+        }
+
+        function changeScreen(oldId, newId) {
+            document.getElementById(oldId).classList.add('hidden');
+            document.getElementById(oldId).classList.remove('flex');
+            document.getElementById(newId).classList.remove('hidden');
+            document.getElementById(newId).classList.add('flex');
+        }
+
+        function logLine(msg) {
+            const log = document.getElementById('terminal-log');
+            if (!log) return;
+            const ts = new Date().toLocaleTimeString('fr-FR', { hour12: false });
+            const div = document.createElement('div');
+            div.innerHTML = `<span class="opacity-50">[${ts}]</span> ${msg}`;
+            log.appendChild(div);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function clearLog() {
+            const log = document.getElementById('terminal-log');
+            if (log) log.innerHTML = '';
+        }
+
+        function triggerAccessDenied() {
+            const flash = document.getElementById('alert-flash');
+            flash.classList.remove('hidden');
+            flash.classList.add('alert-flash-anim');
+            setTimeout(() => { flash.classList.add('hidden'); flash.classList.remove('alert-flash-anim'); }, 700);
+
+            const stamp = document.getElementById('denied-stamp');
+            stamp.classList.remove('hidden');
+            stamp.classList.add('stamp-slam');
+            setTimeout(() => { stamp.classList.add('hidden'); stamp.classList.remove('stamp-slam'); }, 1300);
+
+            playSiren();
+        }
+
+        // ---------------- SÉQUENCE DE DÉMARRAGE ----------------
+        const BOOT_LINES = [
+            "I.R.I.S // NOYAU D'ARCHIVAGE CENTRAL — REV. 7.4",
+            "Institut de Recherche et d'Investigation Surnaturelle",
+            "----------------------------------------------------",
+            "> Initialisation du noyau sécurisé .............. OK",
+            "> Vérification de l'intégrité des scellés ....... OK",
+            "> Chargement des protocoles de confinement ...... OK",
+            "> Calibration des capteurs biométriques ......... OK",
+            "> Établissement de la liaison chiffrée .......... OK",
+            "> Purge des journaux temporaires ................ OK",
+            "> STATUT RÉSEAU : NOMINAL",
+            "----------------------------------------------------",
+            "BIENVENUE, AGENT. TOUTE INTRUSION SERA CONSIGNÉE."
+        ];
+
+        function typeLine(el, text) {
+            return new Promise(resolve => {
+                const span = document.createElement('div');
+                span.classList.add('boot-cursor');
+                el.appendChild(span);
+                let i = 0;
+                const interval = setInterval(() => {
+                    span.textContent = text.slice(0, i + 1);
+                    i++;
+                    if (i >= text.length) {
+                        clearInterval(interval);
+                        span.classList.remove('boot-cursor');
+                        resolve();
+                    }
+                }, 10);
+            });
+        }
+
+        async function runBootSequence() {
+            const log = document.getElementById('boot-log');
+            for (const line of BOOT_LINES) {
+                await typeLine(log, line);
+            }
+            document.getElementById('boot-sigil').style.opacity = 1;
+            await wait(900);
+            changeScreen('screen-boot', 'screen-choice');
+        }
+
+        // ---------------- PORTAIL / SÉLECTION ----------------
+        function buildTypeGrid(types) {
+            const grid = document.getElementById('doc-type-grid');
+            grid.innerHTML = '';
+            typeLabelMap = {};
+            selectedDocType = '';
+
+            if (types.size === 0) {
+                grid.innerHTML = '<p class="col-span-2 text-center text-xs uppercase opacity-60 tracking-widest py-4">Base de données vide</p>';
+                return;
+            }
+
+            types.forEach(t => {
+                const label = t.toUpperCase();
+                typeLabelMap[t] = label;
+                const card = document.createElement('button');
+                card.type = 'button';
+                card.className = 'doc-type-card';
+                card.dataset.type = t;
+                card.innerHTML = `
+                    <i class="fa-solid ${iconForType(t)} text-lg mb-1"></i>
+                    <span class="block text-[11px] font-bold tracking-widest">${label}</span>
+                    <span class="block text-[9px] opacity-50 tracking-widest mt-1">RÉF. ${pseudoCode(t)}</span>
+                `;
+                card.onclick = () => selectDocType(t, card);
+                grid.appendChild(card);
+            });
+        }
+
+        function selectDocType(type, card) {
+            document.querySelectorAll('.doc-type-card').forEach(c => c.classList.remove('active'));
+            card.classList.add('active');
+            selectedDocType = type;
+            initAudio();
+            playBeep(500, 0.04);
+        }
+
+        async function initPortal() {
+            initAudio();
+            playBeep(440, 0.12);
+
+            document.getElementById('loading-icon').className = "fa-solid fa-network-wired absolute inset-0 flex items-center justify-center text-xl animate-pulse";
+            clearLog();
+            logLine("Connexion au serveur central...");
+            logLine("Acquisition de la liste des archives...");
+            changeScreen('screen-choice', 'screen-loading');
+
+            const targetUrl = _getDbUrl();
+            if (!targetUrl) {
+                showErrorModal("Erreur Système", "Liaison réseau introuvable.");
+                return goBack();
+            }
+
+            try {
+                const response = await fetch(targetUrl);
+                const csvText = await response.text();
+                csvDataCache = csvText.split('\n').map(row => row.split(','));
+
+                const types = new Set();
+                for (let i = 1; i < csvDataCache.length; i++) {
+                    if (csvDataCache[i].length >= 3) {
+                        const t = csvDataCache[i][0].trim().toLowerCase();
+                        if (t) types.add(t);
+                    }
+                }
+
+                buildTypeGrid(types);
+
+                changeScreen('screen-loading', 'screen-auth');
+                playBeep(600, 0.08);
+
+            } catch (error) {
+                console.error(error);
+                showErrorModal("Échec de Connexion", "Impossible de synchroniser avec la base de données centrale.");
+                goBack();
+            }
+        }
+
+        // ---------------- CHIFFREMENT ----------------
+        async function deriveDecryptKey(password, salt) {
+            const encoder = new TextEncoder();
+            const baseKey = await crypto.subtle.importKey("raw", encoder.encode(password), { name: "PBKDF2" }, false, ["deriveKey"]);
+            return crypto.subtle.deriveKey({ name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" }, baseKey, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+        }
+
+        async function decryptBuffer(encryptedBuffer, password) {
+            const salt = new Uint8Array(encryptedBuffer.slice(0, 16));
+            const iv = new Uint8Array(encryptedBuffer.slice(16, 28));
+            const encryptedData = encryptedBuffer.slice(28);
+            const key = await deriveDecryptKey(password, salt);
+            return crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, key, encryptedData);
+        }
+
+        async function validateCode() {
+            initAudio();
+            const inputCode = document.getElementById('access-code').value.trim();
+            currentType = selectedDocType;
+
+            const errorMsg = document.getElementById('error-msg');
+            errorMsg.classList.add('hidden');
+
+            if (!inputCode || !currentType) {
+                errorMsg.innerText = "Veuillez sélectionner une classification et saisir le code d'accès.";
+                errorMsg.classList.remove('hidden');
+                return;
+            }
+
+            playBeep(880, 0.05);
+            document.getElementById('loading-icon').className = "fa-solid fa-lock-open absolute inset-0 flex items-center justify-center text-xl animate-pulse";
+            clearLog();
+            logLine("Recherche de l'archive...");
+            changeScreen('screen-auth', 'screen-loading');
+
+            let encryptedFileUrl = null;
+
+            for (let i = 1; i < csvDataCache.length; i++) {
+                if (csvDataCache[i].length >= 3) {
+                    const typeSheet = csvDataCache[i][0].trim().toLowerCase();
+                    const codeSheet = csvDataCache[i][1].trim();
+                    const urlSheet = csvDataCache[i][2].trim().replace('\r', '');
+
+                    if (typeSheet === currentType && codeSheet === inputCode) {
+                        encryptedFileUrl = urlSheet;
+                        break;
+                    }
+                }
+            }
+
+            if (encryptedFileUrl) {
+                applyTheme(currentType);
+                await loadAndDecryptPDF(encryptedFileUrl, inputCode);
+            } else {
+                playSiren();
+                changeScreen('screen-loading', 'screen-auth');
+                errorMsg.innerText = "Échec du décryptage. Code ou classification incorrects.";
+                errorMsg.classList.remove('hidden');
+                document.getElementById('access-code').value = "";
+                triggerAccessDenied();
+            }
+        }
+
+        function applyTheme(type) {
+            const isBook = isBookType(type);
+            document.body.className = 'theme-' + (isBook ? 'livre' : 'rapport') + ' h-screen w-screen overflow-hidden relative transition-all duration-700 ease-in-out';
+
+            const crtOverlay = document.getElementById('crt-overlay');
+            const hudGrid = document.getElementById('hud-grid');
+            const topBar = document.getElementById('top-bar');
+            const navBar = document.getElementById('viewer-nav-bar');
+
+            if (isBook) {
+                crtOverlay.style.display = 'none';
+                hudGrid.style.display = 'none';
+                topBar.className = "flex justify-between items-center w-full z-10 px-4 py-3 rounded-lg border-2 border-[#8d6e63] bg-[#fcf8ed] text-[#3e2723] shadow-md transition-colors";
+                navBar.className = "flex justify-between items-center max-w-lg w-full mx-auto gap-4 z-10 py-2 px-4 rounded-full border border-[#8d6e63] bg-[#fcf8ed] text-[#3e2723] shadow-md";
+            } else {
+                crtOverlay.style.display = 'block';
+                hudGrid.style.display = 'block';
+                topBar.className = "flex justify-between items-center w-full z-10 px-4 py-3 rounded-lg border border-current/40 bg-black/80 text-current shadow-[0_0_20px_rgba(255,217,0,0.2)] transition-colors";
+                navBar.className = "flex justify-between items-center max-w-lg w-full mx-auto gap-4 z-10 py-2 px-4 rounded-full border border-current/40 bg-black/80 text-current shadow-[0_0_20px_rgba(255,217,0,0.2)]";
+            }
+
+            updateClassificationStamp();
+        }
+
+        function updateClassificationStamp() {
+            const el = document.getElementById('classification-stamp');
+            const code = pseudoCode(currentType || 'inconnu');
+            if (isBookType(currentType)) {
+                el.style.top = '2rem'; el.style.right = '2rem'; el.style.left = 'auto';
+                el.innerHTML = `<div class="border-double border-4 border-[#8d6e63] text-[#6d4c41] font-stamp text-[10px] tracking-[0.25em] uppercase px-3 py-2 rotate-[-9deg] bg-[#f2e8c9]/80 text-center">Archive Arcanique<br>Réf. ${code}</div>`;
+            } else {
+                el.style.top = '5.5rem'; el.style.right = '1.5rem'; el.style.left = 'auto';
+                el.innerHTML = `<div class="border-2 border-red-600/70 text-red-600/85 font-stamp text-[10px] tracking-[0.25em] uppercase px-3 py-2 rotate-[-9deg] text-center">Niveau Confidentiel<br>Réf. ${code}</div>`;
+            }
+        }
+
+        function startSessionClock() {
+            stopSessionClock();
+            const el = document.getElementById('session-clock');
+            const tick = () => { el.innerText = new Date().toLocaleTimeString('fr-FR', { hour12: false }); };
+            tick();
+            clockInterval = setInterval(tick, 1000);
+        }
+
+        function stopSessionClock() {
+            if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
+        }
+
+        // ---------------- CHARGEMENT ET RENDU DU PDF ----------------
+        async function loadAndDecryptPDF(fileUrl, key) {
+            if (flipBookInstance) {
+                try { flipBookInstance.destroy(); } catch (e) { console.warn(e); }
+                flipBookInstance = null;
+            }
+
+            const existingBook = document.getElementById('book');
+            if (existingBook) existingBook.innerHTML = '';
+
+            logLine("Recherche de l'archive...");
+            logLine("Téléchargement du fichier .enc...");
+
+            try {
+                const response = await fetch(fileUrl);
+                if (!response.ok) throw new Error("Fichier .enc introuvable.");
+
+                const base64Text = await response.text();
+
+                logLine("Reconstruction physique du flux...");
+                logLine("Nettoyage anti-corruption en cours...");
+
+                const cleanedBase64 = base64Text.replace(/\s/g, '');
+
+                logLine("Décodage Base64...");
+                const binaryString = atob(cleanedBase64);
+                const len = binaryString.length;
+                const encryptedArrayBuffer = new ArrayBuffer(len);
+                const uint8Array = new Uint8Array(encryptedArrayBuffer);
+                for (let i = 0; i < len; i++) uint8Array[i] = binaryString.charCodeAt(i);
+
+                logLine("Déchiffrement AES-256-GCM...");
+                logLine("Démultiplexage des blocs de données...");
+                const decryptedArrayBuffer = await decryptBuffer(encryptedArrayBuffer, key);
+
+                logLine("Initialisation du moteur PDF...");
+                pdfInstance = await pdfjsLib.getDocument({ data: decryptedArrayBuffer }).promise;
+                totalPagesCount = pdfInstance.numPages;
+
+                const bookContainer = document.getElementById('book');
+                bookContainer.innerHTML = '';
+
+                let firstViewport = null;
+
+                for (let pageNum = 1; pageNum <= totalPagesCount; pageNum++) {
+                    logLine(`Rendu de la page ${pageNum} / ${totalPagesCount}...`);
+
+                    const page = await pdfInstance.getPage(pageNum);
+                    const baseViewport = page.getViewport({ scale: 1 });
+
+                    const availableWidth = window.innerWidth < 768
+                        ? window.innerWidth * 0.92
+                        : (window.innerWidth * 0.78) / 2;
+                    const availableHeight = window.innerHeight * 0.78;
+
+                    const scaleX = availableWidth / baseViewport.width;
+                    const scaleY = availableHeight / baseViewport.height;
+                    const finalScale = Math.min(scaleX, scaleY);
+
+                    const viewport = page.getViewport({ scale: finalScale });
+                    if (!firstViewport) firstViewport = viewport;
+
+                    const pageDiv = document.createElement('div');
+                    pageDiv.className = 'page';
+
+                    const pageContent = document.createElement('div');
+                    pageContent.className = 'page-content';
+
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    const ratio = window.devicePixelRatio || 1;
+
+                    canvas.width = viewport.width * ratio;
+                    canvas.height = viewport.height * ratio;
+                    canvas.style.width = viewport.width + 'px';
+                    canvas.style.height = viewport.height + 'px';
+                    context.scale(ratio, ratio);
+
+                    await page.render({ canvasContext: context, viewport: viewport }).promise;
+
+                    pageContent.classList.add(isBookType(currentType) ? 'parchment' : 'bg-black');
+                    pageContent.appendChild(canvas);
+                    pageDiv.appendChild(pageContent);
+                    bookContainer.appendChild(pageDiv);
+                }
+
+                logLine("Séquence terminée. Ouverture de l'archive.");
+                initPageFlip(totalPagesCount, firstViewport.width, firstViewport.height);
+
+            } catch (err) {
+                console.error(err);
+                showErrorModal("Erreur de Décryptage", "Le décryptage a échoué. Vérifie le mot de passe ou le fichier .enc.");
+                goBack();
+            }
+        }
+
+        // ---------------- MOTEUR PAGE-FLIP ----------------
+        function initPageFlip(total, pageWidth, pageHeight) {
+            const isMobile = window.innerWidth < 768;
+
+            document.getElementById('book-container').classList.remove('hidden');
+            document.getElementById('viewer-nav-bar').classList.remove('hidden');
+
+            const container = document.getElementById('book');
+
+            if (flipBookInstance) {
+                flipBookInstance.destroy();
+                flipBookInstance = null;
+            }
+
+            const viewportW = window.innerWidth;
+            const viewportH = window.innerHeight;
+
+            const reservedTopBottom = isMobile ? 170 : 190;
+            const reservedSides = isMobile ? 20 : 80;
+
+            const usableW = viewportW - reservedSides;
+            const usableH = viewportH - reservedTopBottom;
+
+            const ratio = pageWidth / pageHeight;
+
+            let finalPageWidth, finalPageHeight;
+
+            if (isMobile) {
+                finalPageHeight = usableH * 0.98;
+                finalPageWidth = finalPageHeight * ratio;
+                if (finalPageWidth > usableW) {
+                    finalPageWidth = usableW;
+                    finalPageHeight = finalPageWidth / ratio;
+                }
+            } else {
+                finalPageHeight = usableH * 0.95;
+                finalPageWidth = finalPageHeight * ratio;
+                const totalBookWidth = finalPageWidth * 2;
+                if (totalBookWidth > usableW) {
+                    finalPageWidth = (usableW / 2) * 0.98;
+                    finalPageHeight = finalPageWidth / ratio;
+                }
+            }
+
+            finalPageWidth = Math.floor(finalPageWidth);
+            finalPageHeight = Math.floor(finalPageHeight);
+
+            const bookWidth = isMobile ? finalPageWidth : finalPageWidth * 2;
+            const bookHeight = finalPageHeight;
+
+            container.style.width = `${bookWidth}px`;
+            container.style.height = `${bookHeight}px`;
+            container.style.maxWidth = '100%';
+            container.style.maxHeight = '100%';
+
+            flipBookInstance = new St.PageFlip(container, {
+                width: finalPageWidth,
+                height: finalPageHeight,
+                size: "fixed",
+                minWidth: 220,
+                minHeight: 300,
+                maxWidth: 3000,
+                maxHeight: 3000,
+                autoSize: false,
+                maxShadowOpacity: 0.35,
+                showCover: !isMobile,
+                mobileScrollSupport: false,
+                swipeDistance: 30,
+                drawShadow: true,
+                useMouseEvents: true,
+                showPageCorners: true,
+                disableFlipByClick: false,
+                flippingTime: 700,
+                startPage: 0
+            });
+
+            flipBookInstance.loadFromHTML(document.querySelectorAll('.page'));
+
+            const docLabel = typeLabelMap[currentType] || currentType.toUpperCase();
+            document.getElementById('document-info').innerText = `Archive ${docLabel} — ${total} pages`;
+
+            updatePageCounter(1, total);
+            startSessionClock();
+
+            flipBookInstance.on('flip', (e) => {
+                if (isBookType(currentType)) playPaperSound();
+                else playBeep(700, 0.05);
+                updatePageCounter(e.data + 1, total);
+            });
+
+            let resizeTimer;
+            window.onresize = () => {
+                clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(() => {
+                    if (flipBookInstance && document.getElementById('screen-viewer').classList.contains('flex')) {
+                        const currentPage = flipBookInstance.getCurrentPageIndex();
+                        flipBookInstance.destroy();
+                        initPageFlip(totalPagesCount, pageWidth, pageHeight);
+                        setTimeout(() => { if (flipBookInstance) flipBookInstance.flip(currentPage); }, 100);
+                    }
+                }, 250);
+            };
+
+            changeScreen('screen-loading', 'screen-viewer');
+        }
+
+        function updatePageCounter(current, total) {
+            document.getElementById('page-counter').innerText = `Page ${current} / ${total}`;
+        }
+
+        function prevPage() { if (flipBookInstance) flipBookInstance.flipPrev(); }
+        function nextPage() { if (flipBookInstance) flipBookInstance.flipNext(); }
+        function firstPage() { if (flipBookInstance) flipBookInstance.flip(0); }
+        function lastPage() { if (flipBookInstance) flipBookInstance.flip(totalPagesCount - 1); }
+
+        document.addEventListener('keydown', (e) => {
+            if (document.getElementById('screen-viewer').classList.contains('flex')) {
+                if (e.key === 'ArrowLeft') prevPage();
+                if (e.key === 'ArrowRight') nextPage();
+                if (e.key === 'Escape') goBack();
+            }
+        });
+
+        function toggleFullScreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => console.warn(err.message));
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        function goBack() {
+            initAudio();
+            playBeep(300, 0.15);
+            document.getElementById('access-code').value = "";
+            document.getElementById('error-msg').classList.add('hidden');
+
+            if (flipBookInstance) {
+                try { flipBookInstance.destroy(); } catch (e) { console.warn(e); }
+                flipBookInstance = null;
+            }
+
+            pdfInstance = null;
+            window.onresize = null;
+            stopSessionClock();
+
+            const oldBook = document.getElementById('book');
+            if (oldBook) oldBook.innerHTML = '';
+
+            const bookContainer = document.getElementById('book-container');
+            bookContainer.innerHTML = `<div id="book" class="flip-book"></div>`;
+
+            const stamp = document.getElementById('classification-stamp');
+            if (stamp) stamp.innerHTML = '';
+
+            ['screen-auth', 'screen-loading', 'screen-viewer'].forEach(s => {
+                document.getElementById(s).classList.add('hidden');
+                document.getElementById(s).classList.remove('flex');
+            });
+
+            document.getElementById('screen-choice').classList.remove('hidden');
+            document.getElementById('screen-choice').classList.add('flex');
+
+            document.body.className = 'theme-rapport h-screen w-screen overflow-hidden relative transition-all duration-700 ease-in-out';
+            document.getElementById('crt-overlay').style.display = 'block';
+            document.getElementById('hud-grid').style.display = 'block';
+        }
+
+        window.addEventListener('resize', () => {
+            if (flipBookInstance && document.getElementById('screen-viewer').classList.contains('flex')) {
+                flipBookInstance.update();
+            }
+        });
+
+        // Glitch d'ambiance périodique sur le titre du portail
+        setInterval(() => {
+            const title = document.getElementById('portal-title');
+            if (!title) return;
+            title.classList.add('glitch-active');
+            setTimeout(() => title.classList.remove('glitch-active'), 150);
+        }, 7000);
+
+        window.addEventListener('DOMContentLoaded', runBootSequence);
+    </script>
+</body>
+</html>
