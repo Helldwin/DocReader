@@ -1,6 +1,6 @@
 # I.R.I.S. — Portail d'Archives Classifiées
 
-Portail rétrofuturiste pour l'Institut de Retenue et d'Isolement Stratégique (I.R.I.S.) :
+Portail rétrofuturiste pour l'Institut de Recherche et d'Investigation Surnaturelle (I.R.I.S.) :
 - séquence de démarrage terminal au boot
 - portail d'accueil avec bandeau d'avertissement et badge d'habilitation
 - sélection de la classification du document par cartes (au lieu d'un menu déroulant)
