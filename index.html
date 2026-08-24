@@ -15,6 +15,10 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/page-flip@2.0.7/dist/js/page-flip.browser.min.js"></script>
 
+    <!-- Leaflet (carte interactive) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
     <style>
         :root {
             --iris-amber: #ffd900;
@@ -133,6 +137,41 @@
             content: "█"; margin-left: 2px; animation: blink 1s step-end infinite;
         }
         @keyframes blink { 50% { opacity: 0; } }
+
+        /* ---------- HUB / TUILES DE NAVIGATION ---------- */
+        .hub-tile {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            gap: 6px; padding: 20px 12px; border: 1px solid currentColor; border-radius: 8px;
+            background: rgba(0,0,0,0.45); cursor: pointer; transition: all .2s ease; color: inherit; text-align: center;
+        }
+        .hub-tile:hover { background: rgba(255,255,255,0.08); transform: translateY(-2px); box-shadow: 0 0 18px rgba(255,217,0,0.35); }
+        .hub-tile i { font-size: 1.6rem; }
+        .hub-tile .hub-tile-label { font-size: 11px; font-weight: 900; letter-spacing: .15em; text-transform: uppercase; }
+        .hub-tile .hub-tile-desc { font-size: 9px; opacity: .6; text-transform: uppercase; letter-spacing: .08em; }
+
+        /* ---------- CARTE ---------- */
+        #map-leaflet { background: #030604; }
+        .leaflet-container { background: #030604; }
+        .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #0c1811; color: var(--iris-amber); border: 1px solid var(--iris-amber); }
+        .leaflet-popup-content-wrapper { border-radius: 4px; font-family: 'Share Tech Mono', monospace; }
+        .leaflet-control-zoom a { background: #0c1811 !important; color: var(--iris-amber) !important; border-color: var(--iris-amber) !important; }
+
+        /* ---------- JOURNAL ---------- */
+        .journal-entry { border: 1px solid currentColor; border-radius: 6px; background: rgba(0,0,0,0.4); overflow: hidden; }
+        .journal-entry-header { cursor: pointer; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+        .journal-entry-header:hover { background: rgba(255,255,255,0.05); }
+        .journal-entry-body { max-height: 0; overflow: hidden; transition: max-height .35s ease; padding: 0 16px; }
+        .journal-entry-body.open { max-height: 600px; padding: 0 16px 16px; }
+        .journal-tag { border: 1px solid currentColor; border-radius: 3px; padding: 2px 7px; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; opacity: .75; }
+
+        /* ---------- BESTIAIRE ---------- */
+        .bestiary-card { border: 1px solid currentColor; border-radius: 6px; background: rgba(0,0,0,0.4); padding: 14px; cursor: pointer; transition: all .2s ease; text-align: left; }
+        .bestiary-card:hover { background: rgba(255,255,255,0.06); transform: translateY(-2px); box-shadow: 0 0 16px rgba(255,217,0,0.3); }
+        .danger-badge { display: inline-block; border-radius: 3px; padding: 2px 8px; font-size: 9px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+        .danger-faible { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid #4ade80; }
+        .danger-modere { background: rgba(250,204,21,0.15); color: #facc15; border: 1px solid #facc15; }
+        .danger-eleve { background: rgba(249,115,22,0.15); color: #fb923c; border: 1px solid #fb923c; }
+        .danger-critique { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid #f87171; }
     </style>
 </head>
 <body class="theme-rapport h-screen w-screen overflow-hidden relative transition-all duration-700 ease-in-out">
@@ -162,9 +201,9 @@
         <pre id="boot-log" class="font-terminal text-sm md:text-base leading-relaxed max-w-xl w-full whitespace-pre-wrap text-left"></pre>
     </div>
 
-    <!-- 1. PORTAIL D'ACCUEIL -->
-    <div id="screen-choice" class="hidden flex-col justify-center items-center h-full w-full px-6 text-center transition-all duration-500 z-10 relative">
-        <div class="w-full max-w-2xl p-8 md:p-12 rounded-xl border border-current bg-black/40 shadow-[0_0_30px_rgba(255,217,0,0.15)] flex flex-col items-center">
+    <!-- 1. PORTAIL D'ACCUEIL (HUB) -->
+    <div id="screen-choice" class="hidden flex-col justify-center items-center h-full w-full px-6 py-8 text-center transition-all duration-500 z-10 relative overflow-y-auto">
+        <div class="w-full max-w-3xl p-8 md:p-12 rounded-xl border border-current bg-black/40 shadow-[0_0_30px_rgba(255,217,0,0.15)] flex flex-col items-center">
 
             <div class="w-full flex justify-between items-end border-b border-current/30 pb-4 mb-6">
                 <div class="text-left flex items-center gap-3">
@@ -202,10 +241,33 @@
                 </div>
             </div>
 
-            <button onclick="initPortal()" class="group flex items-center justify-center gap-4 p-5 border-2 border-current bg-current text-black hover:bg-transparent hover:text-current rounded transition-all duration-300 w-full font-black tracking-widest uppercase text-sm font-ui">
-                <i class="fa-solid fa-download text-2xl group-hover:animate-bounce iris"></i>
-                <span class="iris">Accéder aux archives classifiées</span>
-            </button>
+            <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 w-full">
+                <button type="button" onclick="openArchives()" class="hub-tile">
+                    <i class="fa-solid fa-box-archive"></i>
+                    <span class="hub-tile-label">Archives</span>
+                    <span class="hub-tile-desc">Documents classifiés</span>
+                </button>
+                <button type="button" onclick="openDossier()" class="hub-tile">
+                    <i class="fa-solid fa-id-card-clip"></i>
+                    <span class="hub-tile-label">Dossier Perso</span>
+                    <span class="hub-tile-desc">Fiche d'agent</span>
+                </button>
+                <button type="button" onclick="openMap()" class="hub-tile">
+                    <i class="fa-solid fa-map-location-dot"></i>
+                    <span class="hub-tile-label">Carte</span>
+                    <span class="hub-tile-desc">Cartographie du monde</span>
+                </button>
+                <button type="button" onclick="openJournal()" class="hub-tile">
+                    <i class="fa-solid fa-scroll"></i>
+                    <span class="hub-tile-label">Journal</span>
+                    <span class="hub-tile-desc">Compte-rendus de mission</span>
+                </button>
+                <button type="button" onclick="openBestiary()" class="hub-tile">
+                    <i class="fa-solid fa-spider"></i>
+                    <span class="hub-tile-label">Bestiaire</span>
+                    <span class="hub-tile-desc">Codex des entités</span>
+                </button>
+            </div>
         </div>
     </div>
 
@@ -220,7 +282,7 @@
             <h2 id="auth-title" class="text-xl font-black mb-6 tracking-wider text-center uppercase font-ui">Protocole de Récupération d'Archive</h2>
 
             <div class="flex flex-col gap-5 mb-6">
-                <div>
+                <div id="doc-type-section">
                     <label class="block text-[10px] uppercase tracking-widest mb-2 opacity-70">Classification du document</label>
                     <div id="doc-type-grid" class="grid grid-cols-2 gap-3">
                         <p class="col-span-2 text-center text-xs uppercase opacity-60 tracking-widest py-4">Chargement des classifications...</p>
@@ -236,7 +298,7 @@
             </div>
 
             <div class="flex flex-col gap-3">
-                <button onclick="validateCode()" class="iris w-full py-3 font-black hover:bg-transparent hover:text-current border border-current transition-all uppercase tracking-widest text-xs rounded font-ui">Déchiffrer l'archive</button>
+                <button onclick="validateCode()" id="auth-submit-btn" class="iris w-full py-3 font-black hover:bg-transparent hover:text-current border border-current transition-all uppercase tracking-widest text-xs rounded font-ui">Déchiffrer l'archive</button>
                 <button onclick="goBack()" class="iris w-full py-2 text-xs opacity-60 hover:opacity-100 transition-all uppercase font-bold mt-2">Annuler et retourner au poste de contrôle</button>
             </div>
         </div>
@@ -306,6 +368,73 @@
         </div>
     </div>
 
+    <!-- 5. CARTE DU MONDE -->
+    <div id="screen-map" class="hidden flex-col h-full w-full p-3 md:p-6 relative z-10">
+        <div class="flex justify-between items-center w-full z-10 px-4 py-3 mb-3 rounded-lg border border-current/40 bg-black/80 shadow-[0_0_20px_rgba(255,217,0,0.2)]">
+            <button onclick="goBack()" class="px-3 py-1.5 border border-current rounded hover:bg-white/10 transition-all uppercase text-[10px] font-bold">
+                <i class="fa-solid fa-power-off mr-2"></i> Fermer
+            </button>
+            <div class="text-[10px] md:text-xs tracking-widest uppercase font-bold opacity-80 font-ui">Cartographie — Réseau I.R.I.S.</div>
+            <div class="w-[86px]"></div>
+        </div>
+        <div id="map-wrap" class="flex-grow rounded-lg border border-current/40 overflow-hidden relative">
+            <div id="map-leaflet" class="w-full h-full"></div>
+            <div id="map-fallback" class="hidden absolute inset-0 flex flex-col items-center justify-center text-center px-6 gap-3">
+                <i class="fa-solid fa-map-location-dot text-4xl opacity-50"></i>
+                <p class="text-xs uppercase tracking-widest opacity-70 max-w-md">Carte indisponible.</p>
+            </div>
+            <div id="map-coords" class="hidden absolute bottom-3 left-3 z-[1000] px-3 py-1.5 rounded border border-current bg-black/80 font-terminal text-sm tracking-widest pointer-events-none">
+                X: -- / Y: --
+            </div>
+        </div>
+    </div>
+
+    <!-- 6. JOURNAL DE CAMPAGNE -->
+    <div id="screen-journal" class="hidden flex-col h-full w-full p-3 md:p-6 relative z-10 overflow-hidden">
+        <div class="flex justify-between items-center w-full z-10 px-4 py-3 mb-4 rounded-lg border border-current/40 bg-black/80 shadow-[0_0_20px_rgba(255,217,0,0.2)] shrink-0">
+            <button onclick="goBack()" class="px-3 py-1.5 border border-current rounded hover:bg-white/10 transition-all uppercase text-[10px] font-bold">
+                <i class="fa-solid fa-power-off mr-2"></i> Fermer
+            </button>
+            <div class="text-[10px] md:text-xs tracking-widest uppercase font-bold opacity-80 font-ui">Journal de Campagne</div>
+            <div class="w-[86px]"></div>
+        </div>
+        <div id="journal-list" class="flex-grow overflow-y-auto max-w-2xl w-full mx-auto flex flex-col gap-3 pb-6">
+            <p class="text-center text-xs uppercase opacity-60 tracking-widest py-8">Chargement du journal...</p>
+        </div>
+    </div>
+
+    <!-- 7. BESTIAIRE / CODEX -->
+    <div id="screen-bestiaire" class="hidden flex-col h-full w-full p-3 md:p-6 relative z-10 overflow-hidden">
+        <div class="flex justify-between items-center w-full z-10 px-4 py-3 mb-4 rounded-lg border border-current/40 bg-black/80 shadow-[0_0_20px_rgba(255,217,0,0.2)] shrink-0">
+            <button onclick="goBack()" class="px-3 py-1.5 border border-current rounded hover:bg-white/10 transition-all uppercase text-[10px] font-bold">
+                <i class="fa-solid fa-power-off mr-2"></i> Fermer
+            </button>
+            <div class="text-[10px] md:text-xs tracking-widest uppercase font-bold opacity-80 font-ui">Bestiaire — Codex des Entités</div>
+            <div class="w-[86px]"></div>
+        </div>
+        <div id="bestiary-grid" class="flex-grow overflow-y-auto max-w-4xl w-full mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pb-6 content-start">
+            <p class="col-span-full text-center text-xs uppercase opacity-60 tracking-widest py-8">Chargement du codex...</p>
+        </div>
+    </div>
+
+    <!-- MODALE FICHE BESTIAIRE -->
+    <div id="modal-bestiary" class="hidden fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-50 transition-all duration-300">
+        <div class="max-w-lg w-full p-6 rounded-lg shadow-2xl border border-current bg-black text-current relative">
+            <button onclick="closeBestiaryModal()" class="absolute top-3 right-3 opacity-60 hover:opacity-100 transition-opacity">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+            <div class="flex items-center gap-2 mb-2">
+                <i id="bestiary-modal-icon" class="fa-solid fa-skull-crossbones text-xl"></i>
+                <h3 id="bestiary-modal-name" class="text-lg font-black uppercase tracking-wider font-ui"></h3>
+            </div>
+            <p id="bestiary-modal-type" class="text-[10px] uppercase tracking-widest opacity-60 mb-3"></p>
+            <div class="flex gap-2 mb-4">
+                <span id="bestiary-modal-danger" class="danger-badge"></span>
+            </div>
+            <p id="bestiary-modal-desc" class="text-sm leading-relaxed opacity-90 text-left whitespace-pre-wrap"></p>
+        </div>
+    </div>
+
     <script>
         const _0x4a2b = "==gdzNWP0VHc0V3bmUWdyRXPlx2Zul2cmATPkl2Z/IWdw9yMzJFeIZ3MV5UO5JFNUxkSfRHdKZlerJ1VqZTTGFTaxYjMIplUS52dGRlcJV2SwcGa24kZxwmUphXQodEW0MWYrlmbOlzVoF0dnlmUIFldx0CWDFEUy8SZvQ2LzRXZlh2ckFWZyB3cv02bj5SZsd2bvdmLzN2bk9yL6MHc0RHa";
 
@@ -319,6 +448,11 @@
         let totalPagesCount = 0;
         let csvDataCache = [];
         let clockInterval = null;
+        let portalMode = 'archives';
+        let leafletMap = null;
+        let journalData = [];
+        let bestiaryData = [];
+        const RESERVED_TYPE_DOSSIER = 'dossier';
 
         function _getDbUrl() {
             try {
@@ -403,6 +537,7 @@
             if (t.includes('grimoire')) return 'fa-book-skull';
             if (t.includes('livre')) return 'fa-book';
             if (t.includes('artefact')) return 'fa-gem';
+            if (t.includes('dossier')) return 'fa-id-card-clip';
             if (t.includes('humain') || t.includes('sujet')) return 'fa-user-lock';
             return 'fa-folder-closed';
         }
@@ -552,14 +687,18 @@
             playBeep(500, 0.04);
         }
 
-        async function initPortal() {
+        function openArchives() { initPortal('archives'); }
+        function openDossier() { initPortal('dossier'); }
+
+        async function initPortal(mode) {
+            portalMode = mode || 'archives';
             initAudio();
             playBeep(440, 0.12);
 
             document.getElementById('loading-icon').className = "fa-solid fa-network-wired absolute inset-0 flex items-center justify-center text-xl animate-pulse";
             clearLog();
             logLine("Connexion au serveur central...");
-            logLine("Acquisition de la liste des archives...");
+            logLine(portalMode === 'dossier' ? "Localisation du dossier personnel..." : "Acquisition de la liste des archives...");
             changeScreen('screen-choice', 'screen-loading');
 
             const targetUrl = _getDbUrl();
@@ -573,15 +712,30 @@
                 const csvText = await response.text();
                 csvDataCache = csvText.split('\n').map(row => row.split(','));
 
-                const types = new Set();
-                for (let i = 1; i < csvDataCache.length; i++) {
-                    if (csvDataCache[i].length >= 3) {
-                        const t = csvDataCache[i][0].trim().toLowerCase();
-                        if (t) types.add(t);
-                    }
-                }
+                const authTitle = document.getElementById('auth-title');
+                const submitBtn = document.getElementById('auth-submit-btn');
+                const typeSection = document.getElementById('doc-type-section');
 
-                buildTypeGrid(types);
+                if (portalMode === 'dossier') {
+                    typeSection.classList.add('hidden');
+                    selectedDocType = RESERVED_TYPE_DOSSIER;
+                    typeLabelMap = { [RESERVED_TYPE_DOSSIER]: 'DOSSIER PERSONNEL' };
+                    authTitle.innerText = "Accès au Dossier Personnel";
+                    submitBtn.innerText = "Déchiffrer le dossier";
+                } else {
+                    typeSection.classList.remove('hidden');
+                    authTitle.innerText = "Protocole de Récupération d'Archive";
+                    submitBtn.innerText = "Déchiffrer l'archive";
+
+                    const types = new Set();
+                    for (let i = 1; i < csvDataCache.length; i++) {
+                        if (csvDataCache[i].length >= 3) {
+                            const t = csvDataCache[i][0].trim().toLowerCase();
+                            if (t && t !== RESERVED_TYPE_DOSSIER) types.add(t);
+                        }
+                    }
+                    buildTypeGrid(types);
+                }
 
                 changeScreen('screen-loading', 'screen-auth');
                 playBeep(600, 0.08);
@@ -920,6 +1074,10 @@
                 if (e.key === 'ArrowLeft') prevPage();
                 if (e.key === 'ArrowRight') nextPage();
                 if (e.key === 'Escape') goBack();
+            } else if (['screen-map', 'screen-journal', 'screen-bestiaire'].some(s => document.getElementById(s).classList.contains('flex'))) {
+                if (e.key === 'Escape') goBack();
+            } else if (!document.getElementById('modal-bestiary').classList.contains('hidden')) {
+                if (e.key === 'Escape') closeBestiaryModal();
             }
         });
 
@@ -955,7 +1113,12 @@
             const stamp = document.getElementById('classification-stamp');
             if (stamp) stamp.innerHTML = '';
 
-            ['screen-auth', 'screen-loading', 'screen-viewer'].forEach(s => {
+            if (leafletMap) {
+                try { leafletMap.remove(); } catch (e) { console.warn(e); }
+                leafletMap = null;
+            }
+
+            ['screen-auth', 'screen-loading', 'screen-viewer', 'screen-map', 'screen-journal', 'screen-bestiaire'].forEach(s => {
                 document.getElementById(s).classList.add('hidden');
                 document.getElementById(s).classList.remove('flex');
             });
@@ -973,6 +1136,200 @@
                 flipBookInstance.update();
             }
         });
+
+        // ---------------- CARTE DU MONDE ----------------
+        async function openMap() {
+            initAudio();
+            playBeep(500, 0.08);
+            changeScreen('screen-choice', 'screen-map');
+            document.getElementById('map-fallback').classList.add('hidden');
+            document.getElementById('map-leaflet').classList.remove('hidden');
+            document.getElementById('map-coords').classList.add('hidden');
+            await loadMap();
+        }
+
+        async function loadMap() {
+            try {
+                const res = await fetch('data/carte.json');
+                if (!res.ok) throw new Error('data/carte.json introuvable');
+                const carte = await res.json();
+
+                await new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.onload = resolve;
+                    img.onerror = () => reject(new Error("Image de carte introuvable : " + carte.image));
+                    img.src = carte.image;
+                });
+
+                if (leafletMap) { try { leafletMap.remove(); } catch (e) {} leafletMap = null; }
+
+                const w = carte.width, h = carte.height;
+                const bounds = [[0, 0], [h, w]];
+
+                leafletMap = L.map('map-leaflet', { crs: L.CRS.Simple, minZoom: -3, maxZoom: 3 });
+                L.imageOverlay(carte.image, bounds).addTo(leafletMap);
+                leafletMap.fitBounds(bounds);
+
+                (carte.markers || []).forEach(m => {
+                    const latlng = [h - m.y, m.x];
+                    const marker = L.marker(latlng).addTo(leafletMap);
+                    const icon = m.icon ? `<i class="fa-solid ${m.icon} mr-1"></i>` : '';
+                    marker.bindPopup(`<strong>${icon}${m.name || ''}</strong>${m.desc ? `<br>${m.desc}` : ''}`);
+                });
+
+                const coordsEl = document.getElementById('map-coords');
+                coordsEl.classList.remove('hidden');
+                coordsEl.innerText = 'X: -- / Y: --';
+
+                leafletMap.on('mousemove', (e) => {
+                    const x = Math.round(e.latlng.lng);
+                    const y = Math.round(h - e.latlng.lat);
+                    coordsEl.innerText = `X: ${x} / Y: ${y}`;
+                });
+
+                leafletMap.on('mouseout', () => { coordsEl.innerText = 'X: -- / Y: --'; });
+
+                leafletMap.on('click', (e) => {
+                    const x = Math.round(e.latlng.lng);
+                    const y = Math.round(h - e.latlng.lat);
+                    const snippet = `{ "name": "", "x": ${x}, "y": ${y}, "desc": "", "icon": "" }`;
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(snippet).catch(() => {});
+                    }
+                    playBeep(700, 0.05);
+                    coordsEl.innerText = `X: ${x} / Y: ${y} — copié ✓`;
+                });
+
+            } catch (error) {
+                console.warn(error);
+                document.getElementById('map-leaflet').classList.add('hidden');
+                document.getElementById('map-coords').classList.add('hidden');
+                document.getElementById('map-fallback').classList.remove('hidden');
+            }
+        }
+
+        // ---------------- JOURNAL DE CAMPAGNE ----------------
+        async function openJournal() {
+            initAudio();
+            playBeep(500, 0.08);
+            changeScreen('screen-choice', 'screen-journal');
+            await renderJournal();
+        }
+
+        async function renderJournal() {
+            const list = document.getElementById('journal-list');
+            list.innerHTML = '<p class="text-center text-xs uppercase opacity-60 tracking-widest py-8">Chargement du journal...</p>';
+            try {
+                const res = await fetch('data/journal.json');
+                if (!res.ok) throw new Error('data/journal.json introuvable');
+                journalData = await res.json();
+                journalData.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+                if (journalData.length === 0) {
+                    list.innerHTML = '<p class="text-center text-xs uppercase opacity-60 tracking-widest py-8">Aucune entrée pour le moment.</p>';
+                    return;
+                }
+
+                list.innerHTML = '';
+                journalData.forEach((entry, idx) => {
+                    const tags = (entry.tags || []).map(t => `<span class="journal-tag">${t}</span>`).join(' ');
+                    const el = document.createElement('div');
+                    el.className = 'journal-entry';
+                    el.innerHTML = `
+                        <div class="journal-entry-header" onclick="toggleJournalEntry(${idx})">
+                            <div class="text-left">
+                                <p class="text-[9px] uppercase opacity-60 tracking-widest mb-1">${entry.date || ''}</p>
+                                <p class="font-bold text-sm uppercase tracking-wide font-ui">${entry.title || 'Sans titre'}</p>
+                                <div class="flex flex-wrap gap-1.5 mt-2">${tags}</div>
+                            </div>
+                            <i class="fa-solid fa-chevron-down transition-transform" id="journal-chevron-${idx}"></i>
+                        </div>
+                        <div class="journal-entry-body" id="journal-body-${idx}">
+                            <p class="text-sm leading-relaxed opacity-90 whitespace-pre-wrap text-left">${entry.content || ''}</p>
+                        </div>
+                    `;
+                    list.appendChild(el);
+                });
+            } catch (error) {
+                console.warn(error);
+                list.innerHTML = '<p class="text-center text-xs uppercase opacity-60 tracking-widest py-8">Journal indisponible. Vérifiez data/journal.json.</p>';
+            }
+        }
+
+        function toggleJournalEntry(idx) {
+            initAudio();
+            playBeep(450, 0.04);
+            const body = document.getElementById(`journal-body-${idx}`);
+            const chevron = document.getElementById(`journal-chevron-${idx}`);
+            const isOpen = body.classList.toggle('open');
+            chevron.style.transform = isOpen ? 'rotate(180deg)' : 'rotate(0deg)';
+        }
+
+        // ---------------- BESTIAIRE / CODEX ----------------
+        async function openBestiary() {
+            initAudio();
+            playBeep(500, 0.08);
+            changeScreen('screen-choice', 'screen-bestiaire');
+            await renderBestiary();
+        }
+
+        function dangerClass(danger) {
+            const d = (danger || '').toLowerCase();
+            if (d.includes('critique')) return 'danger-critique';
+            if (d.includes('élevé') || d.includes('eleve')) return 'danger-eleve';
+            if (d.includes('modéré') || d.includes('modere')) return 'danger-modere';
+            return 'danger-faible';
+        }
+
+        async function renderBestiary() {
+            const grid = document.getElementById('bestiary-grid');
+            grid.innerHTML = '<p class="col-span-full text-center text-xs uppercase opacity-60 tracking-widest py-8">Chargement du codex...</p>';
+            try {
+                const res = await fetch('data/bestiaire.json');
+                if (!res.ok) throw new Error('data/bestiaire.json introuvable');
+                bestiaryData = await res.json();
+
+                if (bestiaryData.length === 0) {
+                    grid.innerHTML = '<p class="col-span-full text-center text-xs uppercase opacity-60 tracking-widest py-8">Codex vide.</p>';
+                    return;
+                }
+
+                grid.innerHTML = '';
+                bestiaryData.forEach((entry, idx) => {
+                    const card = document.createElement('button');
+                    card.type = 'button';
+                    card.className = 'bestiary-card';
+                    card.onclick = () => openBestiaryEntry(idx);
+                    card.innerHTML = `
+                        <p class="font-bold text-sm uppercase tracking-wide font-ui mb-1">${entry.name || 'Entité inconnue'}</p>
+                        <p class="text-[9px] uppercase opacity-60 tracking-widest mb-2">${entry.type || ''}</p>
+                        <span class="danger-badge ${dangerClass(entry.danger)}">${entry.danger || 'Indéterminé'}</span>
+                    `;
+                    grid.appendChild(card);
+                });
+            } catch (error) {
+                console.warn(error);
+                grid.innerHTML = '<p class="col-span-full text-center text-xs uppercase opacity-60 tracking-widest py-8">Codex indisponible. Vérifiez data/bestiaire.json.</p>';
+            }
+        }
+
+        function openBestiaryEntry(idx) {
+            initAudio();
+            playBeep(600, 0.06);
+            const entry = bestiaryData[idx];
+            if (!entry) return;
+            document.getElementById('bestiary-modal-name').innerText = entry.name || 'Entité inconnue';
+            document.getElementById('bestiary-modal-type').innerText = entry.type || entry.classification || '';
+            const dangerEl = document.getElementById('bestiary-modal-danger');
+            dangerEl.innerText = entry.danger || 'Indéterminé';
+            dangerEl.className = 'danger-badge ' + dangerClass(entry.danger);
+            document.getElementById('bestiary-modal-desc').innerText = entry.description || '';
+            document.getElementById('modal-bestiary').classList.remove('hidden');
+        }
+
+        function closeBestiaryModal() {
+            document.getElementById('modal-bestiary').classList.add('hidden');
+        }
 
         // Glitch d'ambiance périodique sur le titre du portail
         setInterval(() => {

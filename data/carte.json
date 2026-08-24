@@ -1,0 +1,8 @@
+{
+  "image": "vault/Iris_Map.png",
+  "width": 4000,
+  "height": 2750,
+  "markers": [
+    { "name": "Hôtel de Pyralia", "x": 2971, "y": 1672, "desc": "L'un des seuls endroits de repos de ses ruines", "icon": "fa-building-shield" }
+  ]
+}
