@@ -1,0 +1,3 @@
+# Les fichiers de campagne contiennent les clés de déclassification, codes et notes du MJ :
+# ils ne doivent JAMAIS être publiés sur le site.
+*.iris

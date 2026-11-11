@@ -163,6 +163,17 @@
         .journal-entry-body { max-height: 0; overflow: hidden; transition: max-height .35s ease; padding: 0 16px; }
         .journal-entry-body.open { max-height: 600px; padding: 0 16px 16px; }
         .journal-tag { border: 1px solid currentColor; border-radius: 3px; padding: 2px 7px; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; opacity: .75; }
+        /* Journal rendu par js/journal.js (balises <details>) */
+        details.journal-entry > summary { list-style: none; }
+        details.journal-entry > summary::-webkit-details-marker { display: none; }
+        details.journal-entry[open] .journal-entry-body { max-height: none; padding: 0 16px 16px; }
+        details.journal-entry[open] .journal-chevron { transform: rotate(180deg); }
+        .journal-date { font-size: 9px; text-transform: uppercase; opacity: .6; letter-spacing: .1em; margin-bottom: 4px; text-align: left; }
+        .journal-title { font-family: 'Orbitron', sans-serif; font-weight: 700; font-size: .875rem; text-transform: uppercase; text-align: left; }
+        .journal-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+        .journal-text { font-size: .875rem; line-height: 1.6; opacity: .9; white-space: pre-wrap; text-align: left; }
+        .journal-empty { text-align: center; font-size: .75rem; text-transform: uppercase; opacity: .6; letter-spacing: .1em; padding: 2rem 0; }
+        .redacted { background: var(--iris-amber); color: var(--iris-amber); user-select: none; cursor: help; letter-spacing: -1px; }
 
         /* ---------- BESTIAIRE ---------- */
         .bestiary-card { border: 1px solid currentColor; border-radius: 6px; background: rgba(0,0,0,0.4); padding: 14px; cursor: pointer; transition: all .2s ease; text-align: left; }
@@ -267,6 +278,11 @@
                     <span class="hub-tile-label">Bestiaire</span>
                     <span class="hub-tile-desc">Codex des entités</span>
                 </button>
+                <a href="session.html" class="hub-tile">
+                    <i class="fa-solid fa-tower-broadcast"></i>
+                    <span class="hub-tile-label">Session</span>
+                    <span class="hub-tile-desc">Rejoindre / héberger</span>
+                </a>
             </div>
         </div>
     </div>
@@ -1220,36 +1236,11 @@
             const list = document.getElementById('journal-list');
             list.innerHTML = '<p class="text-center text-xs uppercase opacity-60 tracking-widest py-8">Chargement du journal...</p>';
             try {
-                const res = await fetch('data/journal.json');
-                if (!res.ok) throw new Error('data/journal.json introuvable');
-                journalData = await res.json();
-                journalData.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-
-                if (journalData.length === 0) {
-                    list.innerHTML = '<p class="text-center text-xs uppercase opacity-60 tracking-widest py-8">Aucune entrée pour le moment.</p>';
-                    return;
-                }
-
-                list.innerHTML = '';
-                journalData.forEach((entry, idx) => {
-                    const tags = (entry.tags || []).map(t => `<span class="journal-tag">${t}</span>`).join(' ');
-                    const el = document.createElement('div');
-                    el.className = 'journal-entry';
-                    el.innerHTML = `
-                        <div class="journal-entry-header" onclick="toggleJournalEntry(${idx})">
-                            <div class="text-left">
-                                <p class="text-[9px] uppercase opacity-60 tracking-widest mb-1">${entry.date || ''}</p>
-                                <p class="font-bold text-sm uppercase tracking-wide font-ui">${entry.title || 'Sans titre'}</p>
-                                <div class="flex flex-wrap gap-1.5 mt-2">${tags}</div>
-                            </div>
-                            <i class="fa-solid fa-chevron-down transition-transform" id="journal-chevron-${idx}"></i>
-                        </div>
-                        <div class="journal-entry-body" id="journal-body-${idx}">
-                            <p class="text-sm leading-relaxed opacity-90 whitespace-pre-wrap text-left">${entry.content || ''}</p>
-                        </div>
-                    `;
-                    list.appendChild(el);
-                });
+                // Rendu partagé avec la vue joueur (js/journal.js) : les passages censurés
+                // restent chiffrés ici — seuls les joueurs connectés en session peuvent les lire.
+                const J = await window.IrisJournalReady;
+                journalData = await J.fetchJournal('data/journal.json');
+                await J.renderJournal(list, journalData, {});
             } catch (error) {
                 console.warn(error);
                 list.innerHTML = '<p class="text-center text-xs uppercase opacity-60 tracking-widest py-8">Journal indisponible. Vérifiez data/journal.json.</p>';
@@ -1340,6 +1331,13 @@
         }, 7000);
 
         window.addEventListener('DOMContentLoaded', runBootSequence);
+    </script>
+    <script>
+        window.IrisJournalReady = new Promise((resolve) => { window.__resolveIrisJournal = resolve; });
+    </script>
+    <script type="module">
+        import { renderJournal, fetchJournal } from './js/journal.js';
+        window.__resolveIrisJournal({ renderJournal, fetchJournal });
     </script>
 </body>
 </html>
