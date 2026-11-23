@@ -69,7 +69,7 @@ function onMessage(msg) {
             rt.assets.set(msg.key, msg.data);
             rt.pending.get(msg.key)?.resolve(msg.data);
             rt.pending.delete(msg.key);
-            if (msg.key === 'map' && rt.tab === 'map') renderMap();
+            if (msg.key.startsWith('map:') && rt.tab === 'map') renderMap();
             break;
         }
         case 'error': toast(msg.text, 'error'); break;
@@ -209,7 +209,9 @@ function refreshPanel() {
     const c = rt.el.querySelector('#pv-content');
     if (rt.tab === 'sheet') {
         const stats = v.campaign.stats.map((s) => `<div class="stat-tile"><small>${esc(s.label)}</small><b>${esc(me.stats[s.key] ?? 0)}</b></div>`).join('');
-        rerender(c, `<section class="card"><h4><i class="fa-solid fa-chart-simple"></i> Statistiques</h4><div class="stat-tiles">${stats}</div></section>
+        const fields = (me.fields || []).filter((f) => f.label || f.value).map((f) => `<div class="field-tile"><small>${esc(f.label)}</small><b>${esc(f.value)}</b></div>`).join('');
+        rerender(c, `${fields ? `<section class="card"><h4><i class="fa-solid fa-id-badge"></i> Identité</h4><div class="field-tiles">${fields}</div></section>` : ''}
+            <section class="card"><h4><i class="fa-solid fa-chart-simple"></i> Statistiques</h4><div class="stat-tiles">${stats}</div></section>
             ${me.bio ? `<section class="card"><h4><i class="fa-solid fa-user"></i> Dossier</h4><p class="pre">${esc(me.bio)}</p></section>` : ''}
             <section class="card"><h4><i class="fa-solid fa-dice-d20"></i> Derniers jets</h4><ul class="roll-log">${v.rolls.slice().reverse().slice(0, 12).map((r) => `<li>${rollHtml(r)}</li>`).join('') || '<li class="muted">Aucun jet.</li>'}</ul></section>`);
     } else if (rt.tab === 'inv') {
@@ -265,8 +267,9 @@ async function renderMap() {
     rt.map ||= new LiveMap(box, { editable: false });
     let image = v.map.image;
     if (image.startsWith('asset:')) {
-        if (!rt.assets.has('map')) { asset(image); box.innerHTML ||= '<p class="muted center pad">Téléchargement de la carte…</p>'; return; }
-        image = rt.assets.get('map');
+        const key = image.slice(6);
+        if (!rt.assets.has(key)) { asset(image); box.innerHTML ||= '<p class="muted center pad">Téléchargement de la carte…</p>'; return; }
+        image = rt.assets.get(key);
     }
     rt.map.update({ ...v.map, image }, v.map.chars);
 }

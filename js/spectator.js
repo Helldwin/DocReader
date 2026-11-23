@@ -73,7 +73,7 @@ function onMessage(msg) {
         rt.assets.set(msg.key, msg.data);
         rt.pending.get(msg.key)?.resolve(msg.data);
         rt.pending.delete(msg.key);
-        if (msg.key === 'map') renderMap();
+        if (msg.key.startsWith('map:')) renderMap();
         return;
     }
     if (msg.t === 'ended' || msg.t === 'kicked') {
@@ -121,8 +121,9 @@ function renderMap() {
     }
     let image = m.image;
     if (image.startsWith('asset:')) {
-        if (!rt.assets.has('map')) { asset(image); return; }
-        image = rt.assets.get('map');
+        const key = image.slice(6);
+        if (!rt.assets.has(key)) { asset(image); return; }
+        image = rt.assets.get(key);
     }
     if (!rt.map) { box.innerHTML = ''; rt.map = new LiveMap(box, { editable: false }); }
     rt.map.update({ ...m, image }, m.chars);

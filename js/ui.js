@@ -2,12 +2,13 @@
 //  - data-act="nom"            → clic routé vers une action enregistrée (registerActions)
 //  - form data-submit="nom"    → soumission routée vers une action
 //  - data-bind="scope|chemin"  → champ lié directement à l'état (store), sans code par champ
-//      scopes : meta, gm, rules, dice, map, char:<id>, item:<charId>:<itemId>, doc:<id>,
-//               stat:<index>, marker:<index>, journal:<id>, token:<charId>
+//      scopes : state, meta, gm, rules, dice, map[:<mapId>], char:<id>, item:<charId>:<itemId>,
+//               field:<charId>:<index>, doc:<id>, stat:<index>, marker:<mapId>:<index>, journal:<id>,
+//               token:<mapId>:<charId>, npc:<id>, fog[:<mapId>], bank:<id>, scene:<id>, shop…, track…
 //      data-kind : int | float | tags | list  (sinon texte / case à cocher)
 import { store } from './store.js';
 import { toast, setPath, toInt } from './util.js';
-import { findChar, findDoc } from './iris-file.js';
+import { findChar, findDoc, findMap, findNpc, findBank, findScene } from './iris-file.js';
 
 const actions = {};
 export function registerActions(obj) { Object.assign(actions, obj); }
@@ -21,16 +22,20 @@ export function resolveScope(scope) {
         case 'gm': return s.gm;
         case 'rules': return s.rules;
         case 'dice': return s.rules.dice;
-        case 'map': return s.map;
+        case 'state': return s;
+        case 'map': return a ? findMap(s, a) : s.map;
         case 'char': return findChar(s, a);
         case 'item': return findChar(s, a)?.inventory.find((i) => i.id === b);
+        case 'field': return findChar(s, a)?.fields[toInt(b, -1)];
         case 'doc': return findDoc(s, a);
         case 'stat': return s.rules.stats[toInt(a, -1)];
-        case 'marker': return s.map.markers[toInt(a, -1)];
+        case 'marker': return b === undefined ? s.map.markers[toInt(a, -1)] : findMap(s, a)?.markers[toInt(b, -1)];
         case 'journal': return s.journal.find((j) => j.id === a);
-        case 'token': return s.map.tokens[a];
-        case 'npc': return s.map.npcs.find((n) => n.id === a);
-        case 'fog': return s.map.fog;
+        case 'token': return b === undefined ? s.map.tokens[a] : findMap(s, a)?.tokens[b];
+        case 'npc': return findNpc(s, a);
+        case 'fog': return a ? findMap(s, a)?.fog : s.map.fog;
+        case 'bank': return findBank(s, a);
+        case 'scene': return findScene(s, a);
         case 'assign': return s.session.assignments;
         case 'shop': return s.shops.find((x) => x.id === a);
         case 'shopitem': return s.shops.find((x) => x.id === a)?.items.find((i) => i.id === b);

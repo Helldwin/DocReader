@@ -67,7 +67,7 @@ Application de jeu en direct, toujours **100 % statique** : le navigateur du MJ 
 
 ## Déroulé d'une partie
 
-1. **Planifier une session** → *Nouvelle campagne* (ou *Ouvrir un .iris*) : campagne, règles et dés, personnages, documents, carte, rapports. *Exporter le .iris*.
+1. **Planifier une session** → *Nouvelle campagne* (ou *Ouvrir un .iris*) : campagne (avec check-list de la prochaine session), règles et dés, personnages, PNJ & créatures, scénario (scènes), documents, cartes, boutiques, ambiance, codex & lore, rapports. *Enregistrer le .iris*.
 2. **Héberger (MJ)** → importer le `.iris`. Le code de session s'affiche en haut (clic = copie du lien d'invitation `session.html?join=CODE`).
 3. Les joueurs vont sur **Rejoindre une session**, saisissent le code + leur pseudo, et attendent en salle d'attente.
 4. Dans le panneau *Connexions*, le MJ attribue un personnage à chaque joueur. L'attribution est mémorisée : un joueur qui recharge sa page (ou revient la session suivante depuis le même navigateur) retrouve son personnage automatiquement.
@@ -83,7 +83,9 @@ Application de jeu en direct, toujours **100 % statique** : le navigateur du MJ 
 |---|---|
 | **Fiche** : tout modifier en direct (PV, statut, stats, argent avec crédit/débit motivé, inventaire, accès aux documents, bio, notes secrètes) | **Fiche** : stats, dossier, derniers jets |
 | **Dés** : choisir le personnage, bonus/malus, puis cliquer sur une stat ; jet public ou secret ; jet libre (dN) | Animation du jet sur l'écran de tous |
-| **Carte** : afficher/masquer la carte aux joueurs, glisser les jetons, **PNJ / ennemis**, **brouillard de guerre** (pinceau Révéler / Masquer, taille de case, tout révéler / masquer) | **Carte** (si le MJ l'affiche), jetons en direct, brouillard opaque |
+| **Carte** : choisir parmi les cartes, *Montrer cette carte aux joueurs* (on prépare une carte pendant qu'ils en voient une autre), glisser les jetons, **PNJ / ennemis** (fiches de la banque avec portrait et PV, ou PNJ rapide), **brouillard de guerre** par carte | **Carte** (si le MJ l'affiche), jetons en direct, brouillard opaque |
+| **Scènes** : les scènes prévues pour la session ; *Lancer* = carte affichée, musique, document à l'écran, documents remis aux présents, boutiques ouvertes, PNJ posés masqués. Notes, objectifs et fiches du codex sous les yeux | Tout ce que la scène déclenche, en direct |
+| **Codex** : le lore importé (pages, diagrammes, synopsis), réservé au MJ | — |
 | **Messages** : une conversation privée par personnage, badge de non-lus | **MJ** : chat privé avec le MJ |
 | **Documents** : donner l'accès, *Montrer à tous* (ouvre le document chez chaque joueur), éditer, chiffrer un PDF | **Documents** : lecteur intégré (PDF, `.enc`, image, texte) |
 | **Commerce** : ouvrir / fermer les boutiques, ajuster prix et stocks en direct | **Boutique** (si une est ouverte) : acheter, débit automatique, objet ajouté à l'inventaire |
@@ -101,6 +103,28 @@ Un joueur ne reçoit **que** ses propres données (jamais les notes MJ, les mess
 - Dans OBS : *Source* → *Navigateur*, coller le lien, 1920×1080. `obs=1` rend le fond transparent (sans effet CRT) pour l'incrustation ; sans ce paramètre, la vue garde le thème I.R.I.S.
 - Cochez *Contrôler l'audio via OBS* pour récupérer l'ambiance dans le stream.
 - Depuis l'accueil, *Regarder en spectateur* ouvre la même vue. Un spectateur apparaît dans *Connexions* (exclusion possible) et ne peut rien modifier.
+
+## Préparer une session (Planifier)
+
+- **Personnages** : stats, PV, argent, inventaire, documents, bio, notes MJ, et un bloc **Identité** de champs libres visibles du joueur (titre, âge, profession, caractéristiques…). Les champs proposés par défaut se règlent dans *Règles & dés › Fiche d'identité*.
+- **PNJ & créatures** : banque de fiches réutilisables (portrait, type, PV, caractéristiques, description, notes MJ). En session, on les pose sur n'importe quelle carte, en plusieurs exemplaires.
+- **Scénario** : chaque scène a un n° de session, un déroulé, des objectifs/indices et ce qu'elle déclenche au lancement (carte, musique, document à l'écran, documents à distribuer, PNJ, boutiques) + des pages du codex en référence.
+- **Cartes** : autant de cartes que voulu (monde, ville, donjon…), chacune avec ses lieux, jetons, PNJ et brouillard. La carte ★ active est celle que voient les joueurs. *Dupliquer* copie l'image et les lieux.
+- **Campagne** : check-list de la prochaine session (scènes prévues, cartes prêtes, PNJ, documents, ambiance, codex).
+
+## Import d'un projet Amsel Suite (`.lore`)
+
+*Planifier › Codex & lore › Importer un .lore* lit l'archive directement dans le navigateur (rien n'est envoyé en ligne). Chaque partie est optionnelle :
+
+| Dans le .lore | Devient |
+|---|---|
+| Pages (lieux, opérations, artefacts, quêtes…) + synopsis | **Codex** MJ : recherche, filtres par modèle, renvois cliquables, « Mentionné dans », *Créer un document joueur* |
+| Diagrammes (ex. *Résumé du plot*) | Visualiseur : glisser / molette, recherche (Entrée = suivant), détail d'un nœud, causes / conséquences, lien vers la fiche |
+| Cartes + épingles | Cartes de la campagne, épingles → lieux (nom et description de la page liée) |
+| Fiches PJ | Personnages : compétences → stats (d100 « sous la stat »), identité (titre, âge, caractéristiques, profession, compétence unique), PV, blessures → statut, lore → bio, portrait, arme unique → inventaire |
+| Fiches PNJ / créatures | Banque PNJ & créatures |
+
+Réimporter met à jour le codex, les cartes et la banque ; les personnages existants ne sont modifiés que si l'option est cochée (jamais leurs PV en cours, leur argent ni leur inventaire). Les illustrations sont ré-encodées en vignettes WebP (≈ 0,7 Mo pour un projet de 50 pages). Le codex n'est **jamais** envoyé aux joueurs.
 
 ## Brouillon de rapport automatique
 
@@ -133,7 +157,7 @@ Un `.iris` avec des ID renseignés ne peut alors être hébergé qu'après conne
 
 ## Format `.iris`
 
-JSON lisible : `meta`, `gm`, `rules` (stats, dés, monnaie), `characters` (stats, PV, argent, inventaire, docs, bio, notes MJ, clé secrète), `documents`, `map` (image, lieux, jetons, PNJ, brouillard), `shops` (articles, prix, stocks), `ambience` (pistes audio), `chats`, `ledger` (transactions), `rolls`, `log` (événements), `journal`, `session` (code, attributions, début de session). Les champs manquants sont complétés à l'import (`js/iris-file.js` → `normalize`) : un ancien fichier reste toujours lisible.
+JSON lisible (version 2) : `meta`, `gm`, `rules` (stats, dés, monnaie, champs d'identité), `characters` (stats, identité, PV, argent, inventaire, docs, bio, notes MJ, clé secrète), `documents`, `maps[]` (image, lieux, jetons, PNJ, brouillard) + `activeMapId` / `mapShared`, `bestiary` (banque PNJ), `scenes`, `lore` (codex importé), `shops` (articles, prix, stocks), `ambience` (pistes audio), `chats`, `ledger` (transactions), `rolls`, `log` (événements), `journal`, `session` (code, attributions, début de session, scène en cours). Les champs manquants sont complétés à l'import (`js/iris-file.js` → `normalize`) : un ancien fichier reste toujours lisible (un `.iris` v1 à carte unique devient automatiquement la « Carte principale »). Un `.iris` v2 ne s'ouvre pas avec une version antérieure de l'appli.
 
 ## Organisation du code
 
@@ -149,6 +173,8 @@ js/spectator.js     vue spectateur (stream / OBS)
 js/editors.js       fiche personnage, document, boutique, ambiance (partagés MJ & planif)
 js/game.js          règles métier (transferts, achats, jets, vue filtrée par joueur)
 js/report.js        brouillon automatique de rapport
+js/lore.js          import Amsel Suite (.lore : tar + data.json) → codex, cartes, PJ, PNJ
+js/codex.js         codex MJ : pages, synopsis, visualiseur de diagrammes
 js/fog.js           brouillard de guerre (grille compacte)
 js/audio.js         lecteur d'ambiance · js/rolloverlay.js animation des jets
 js/filesave.js      enregistrement direct dans le .iris (Chrome / Edge)

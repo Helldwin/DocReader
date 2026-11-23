@@ -3,9 +3,10 @@
 import { store } from './store.js';
 import { registerActions, rerender, tabsHtml } from './ui.js';
 import { esc, avatarHtml, hpBar, fmtTime, toast, beep, confirmBox, modal, toInt, muted, setMuted } from './util.js';
-import { findChar, findDoc, docKind, newDocument, normalizeNpc } from './iris-file.js';
+import { findChar, findDoc, findMap, findBank, findTrack, findShop, lorePage, docKind, newDocument, normalizeNpc } from './iris-file.js';
 import { Host } from './net.js';
-import { viewFor, makeRoll, addChat, transferItem, transferMoney, buyItem, canGetAsset, assetData, logEvent } from './game.js';
+import { viewFor, makeRoll, addChat, transferItem, transferMoney, buyItem, canGetAsset, assetData, logEvent, launchScene, spawnFromBank } from './game.js';
+import { mountCodex, unmountCodex, showCodexPage } from './codex.js';
 import { OUTCOME_LABEL, describeRoll } from './dice.js';
 import { charEditorHtml, docEditorHtml, kindIcon, shopEditorHtml, ambienceHtml } from './editors.js';
 import { LiveMap } from './map.js';
@@ -19,10 +20,12 @@ const TABS = [
     { id: 'sheet', label: 'Fiche', icon: 'fa-id-card' },
     { id: 'dice', label: 'Dés', icon: 'fa-dice-d20' },
     { id: 'map', label: 'Carte', icon: 'fa-map-location-dot' },
+    { id: 'scenes', label: 'Scènes', icon: 'fa-clapperboard' },
     { id: 'chat', label: 'Messages', icon: 'fa-comments' },
     { id: 'docs', label: 'Documents', icon: 'fa-folder-open' },
     { id: 'shops', label: 'Commerce', icon: 'fa-store' },
     { id: 'ambience', label: 'Ambiance', icon: 'fa-music' },
+    { id: 'codex', label: 'Codex', icon: 'fa-book-skull' },
 ];
 
 const STATUS = {
@@ -37,7 +40,7 @@ let rt = null; // état d'exécution (non sauvegardé)
 export function mountGm(el, { onExit }) {
     const s = store.state;
     rt = {
-        el, onExit, tab: 'sheet', charId: s.characters[0]?.id || null, chatId: null, status: 'connecting',
+        el, onExit, tab: 'sheet', charId: s.characters[0]?.id || null, chatId: null, status: 'connecting', mapId: s.activeMapId,
         unread: {}, lastSent: new Map(), map: null, docModal: null, brush: null, brushSize: 2,
         audio: new AmbiencePlayer(async (src) => (String(src).startsWith('asset:') ? assetData(store.state, src.slice(6)) : src)),
         dice: { charId: s.characters[0]?.id || '', mod: 0, difficulty: s.rules.dice.defaultDifficulty, label: '', isPublic: true, sides: s.rules.dice.sides },
@@ -98,6 +101,7 @@ export function unmountGm() {
     rt.unsub?.();
     rt.audio?.stop();
     rt.map?.destroy();
+    unmountCodex();
     rt.host?.stop();
     rt = null;
 }
@@ -185,12 +189,12 @@ function onStore(evt) {
     if (!rt?.el.isConnected) return;
     broadcast();
     // Coup de pinceau sur le brouillard : rafraîchissement léger de la carte uniquement.
-    if (evt.type === 'update' && evt.scope === 'fog' && !evt.path) { rt.map?.update(store.state.map, store.state.characters); return; }
+    if (evt.type === 'update' && evt.scope?.startsWith('fog') && !evt.path) { rt.map?.update(gmMap(), store.state.characters); return; }
     renderSide();
     renderDirty();
     renderTabs();
     if (evt.type === 'structure' || evt.type === 'load') { refreshPanel(evt); syncAudio(); }
-    else if (rt.tab === 'map' && (evt.scope?.startsWith('token') || evt.scope?.startsWith('npc') || evt.scope === 'map')) refreshPanel(evt);
+    else if (rt.tab === 'map' && (evt.scope?.startsWith('token') || evt.scope?.startsWith('npc') || evt.scope?.startsWith('map'))) refreshPanel(evt);
     else if (evt.scope?.startsWith('track')) syncAudio();
     if (rt.docModal && evt.type === 'structure') refreshDocModal();
 }
@@ -252,6 +256,7 @@ const panel = () => rt.el.querySelector('#gm-panel');
 /** Construit le squelette de l'onglet (champs de saisie persistants). */
 function mountPanel() {
     if (rt.tab !== 'map') { rt.map?.destroy(); rt.map = null; }
+    if (rt.tab !== 'codex') unmountCodex();
     const p = panel();
     const s = store.state;
     if (rt.tab === 'sheet') {
@@ -275,6 +280,10 @@ function mountPanel() {
         p.innerHTML = '<div class="row mb"><button class="btn" data-act="shop.add"><i class="fa-solid fa-plus"></i> Nouvelle boutique</button></div><div id="gm-shops"></div>';
     } else if (rt.tab === 'ambience') {
         p.innerHTML = '<div id="gm-amb"></div>';
+    } else if (rt.tab === 'scenes') {
+        p.innerHTML = '<div id="gm-scenes"></div>';
+    } else if (rt.tab === 'codex') {
+        p.innerHTML = '<div id="cx-root" class="cx-live"></div>';
     }
     refreshPanel({ type: 'load' });
 }
@@ -298,7 +307,42 @@ function refreshPanel() {
         renderChat();
     } else if (rt.tab === 'docs') {
         renderDocs();
+    } else if (rt.tab === 'scenes') {
+        renderScenes();
+    } else if (rt.tab === 'codex') {
+        mountCodex(rt.el.querySelector('#cx-root')); // idempotent : la navigation dans le codex n'est pas perdue
     }
+}
+
+// ---------------------------------------------------------------- Scènes
+function renderScenes() {
+    const s = store.state;
+    const n = s.meta.sessionNumber;
+    const card = (sc) => {
+        const cur = s.session.sceneId === sc.id;
+        const tags = [];
+        const m = findMap(s, sc.mapId); if (m) tags.push(`<span class="chip"><i class="fa-solid fa-map"></i> ${esc(m.name)}${sc.shareMap ? '' : ' (MJ)'}</span>`);
+        const t = findTrack(s, sc.trackId); if (t) tags.push(`<span class="chip"><i class="fa-solid ${t.loop ? 'fa-music' : 'fa-bolt'}"></i> ${esc(t.name)}</span>`);
+        const d = findDoc(s, sc.docId); if (d) tags.push(`<span class="chip"><i class="fa-solid fa-tv"></i> ${esc(d.title)}</span>`);
+        sc.grantDocs.map((id) => findDoc(s, id)).filter(Boolean).forEach((x) => tags.push(`<span class="chip"><i class="fa-solid fa-file-circle-plus"></i> ${esc(x.title)}</span>`));
+        sc.npcs.map((id) => findBank(s, id)).filter(Boolean).forEach((b) => tags.push(`<button class="chip" data-act="gm.bankInfo" data-id="${b.id}"><i class="fa-solid fa-skull"></i> ${esc(b.name)}</button>`));
+        sc.shopIds.map((id) => findShop(s, id)).filter(Boolean).forEach((x) => tags.push(`<span class="chip"><i class="fa-solid fa-store"></i> ${esc(x.name)}</span>`));
+        const refs = sc.codex.map((id) => lorePage(s, id)).filter(Boolean).map((p) => `<button class="chip" data-act="gm.codexPage" data-id="${esc(p.id)}"><i class="fa-solid fa-book"></i> ${esc(p.name)}</button>`).join('');
+        return `<section class="card scene-card ${cur ? 'current' : ''} ${sc.done ? 'done' : ''}">
+            <div class="row wrap"><h4 class="grow">${cur ? '<i class="fa-solid fa-circle-play ok"></i>' : sc.done ? '<i class="fa-solid fa-circle-check"></i>' : '<i class="fa-solid fa-clapperboard"></i>'} ${esc(sc.title)}</h4>
+                <button class="btn sm" data-act="gm.scene" data-id="${sc.id}"><i class="fa-solid fa-play"></i> ${cur ? 'Relancer' : 'Lancer'}</button>
+                <button class="btn ghost sm" data-act="gm.sceneDone" data-id="${sc.id}">${sc.done ? 'Rouvrir' : '<i class="fa-solid fa-check"></i> Jouée'}</button></div>
+            ${tags.length ? `<div class="chips mb">${tags.join('')}</div>` : ''}
+            ${sc.summary ? `<p class="pre">${esc(sc.summary)}</p>` : ''}
+            ${sc.goals ? `<div class="scene-goals"><span class="lbl">Objectifs / indices</span><p class="pre">${esc(sc.goals)}</p></div>` : ''}
+            ${refs ? `<div class="chips mt">${refs}</div>` : ''}
+        </section>`;
+    };
+    const now = s.scenes.filter((sc) => sc.session === n);
+    const others = s.scenes.filter((sc) => sc.session !== n);
+    rerender(rt.el.querySelector('#gm-scenes'), `
+        ${now.map(card).join('') || `<p class="muted">Aucune scène prévue pour la session n°${esc(n)}. Préparez-les dans Planifier › Scénario.</p>`}
+        ${others.length ? `<details class="mt"><summary class="muted">Autres scènes (${others.length})</summary><div class="mt">${others.map(card).join('')}</div></details>` : ''}`);
 }
 
 // ---------------------------------------------------------------- Dés
@@ -340,65 +384,83 @@ function renderRolls() {
 }
 
 // ---------------------------------------------------------------- Carte
+/** Carte affichée dans l'onglet Carte du MJ (peut différer de celle que voient les joueurs). */
+function gmMap() {
+    const s = store.state;
+    if (!rt || !findMap(s, rt.mapId)) { if (rt) rt.mapId = s.activeMapId; return s.map; }
+    return findMap(s, rt.mapId);
+}
+
 function renderMap() {
     const s = store.state;
+    const m = gmMap();
     const box = rt.el.querySelector('#gm-map');
     if (!rt.map || rt.map.el !== box) {
         rt.map = new LiveMap(box, {
             editable: true,
             fogAlpha: 0.55, // le MJ voit à travers le brouillard
             onTokenMove: (id, x, y, kind) => {
-                const m = store.state.map;
+                const mm = gmMap();
                 if (kind === 'npc') {
-                    const n = m.npcs.find((x2) => x2.id === id);
+                    const n = mm.npcs.find((x2) => x2.id === id);
                     if (n) Object.assign(n, { x, y });
                     store.commit('update', { scope: 'npc:' + id });
                 } else {
-                    m.tokens[id] = { ...(m.tokens[id] || {}), x, y };
-                    store.commit('update', { scope: 'token:' + id });
+                    mm.tokens[id] = { ...(mm.tokens[id] || {}), x, y };
+                    store.commit('update', { scope: `token:${mm.id}:${id}` });
                 }
             },
             onPaint: (x, y) => {
-                const m = store.state.map;
-                if (!m.fog.enabled) return;
-                if (paintFog(m, x, y, rt.brushSize, rt.brush === 'reveal')) store.commit('update', { scope: 'fog' });
+                const mm = gmMap();
+                if (!mm.fog.enabled) return;
+                if (paintFog(mm, x, y, rt.brushSize, rt.brush === 'reveal')) store.commit('update', { scope: 'fog:' + mm.id });
             },
         });
     }
-    rt.map.setBrush(s.map.fog.enabled ? rt.brush : null);
-    rt.map.update(s.map, s.characters);
-    const fog = s.map.fog;
+    rt.map.setBrush(m.fog.enabled ? rt.brush : null);
+    rt.map.update(m, s.characters);
+    const fog = m.fog;
+    const shown = m.id === s.activeMapId;
     const brushBtn = (mode, icon, label) => `<button class="btn sm ${rt.brush === mode ? '' : 'ghost'}" data-act="gm.brush" data-mode="${mode}"><i class="fa-solid ${icon}"></i> ${label}</button>`;
+    const bankOpts = s.bestiary.map((b) => `<option value="${b.id}">${esc(b.name)} — ${esc(b.kind)}</option>`).join('');
     rerender(rt.el.querySelector('#gm-map-side'), `
-        <button class="btn full ${s.map.shared ? 'ok' : ''}" data-act="gm.shareMap"><i class="fa-solid ${s.map.shared ? 'fa-eye' : 'fa-eye-slash'}"></i> ${s.map.shared ? 'Carte affichée aux joueurs' : 'Carte masquée aux joueurs'}</button>
+        ${s.maps.length > 1 ? `<label>Carte<select data-gmmap>${s.maps.map((x) => `<option value="${x.id}" ${x.id === m.id ? 'selected' : ''}>${x.id === s.activeMapId ? '★ ' : ''}${esc(x.name)}</option>`).join('')}</select></label>` : ''}
+        ${shown
+        ? `<button class="btn full mt ${s.mapShared ? 'ok' : ''}" data-act="gm.shareMap"><i class="fa-solid ${s.mapShared ? 'fa-eye' : 'fa-eye-slash'}"></i> ${s.mapShared ? 'Carte affichée aux joueurs' : 'Carte masquée aux joueurs'}</button>`
+        : `<button class="btn full mt" data-act="gm.showMap" data-id="${m.id}"><i class="fa-solid fa-tv"></i> Montrer cette carte aux joueurs</button>
+            <p class="muted small">Les joueurs voient : <b>${esc(s.map.name)}</b> ${s.mapShared ? '(affichée)' : '(masquée)'}. Vous préparez « ${esc(m.name)} » sans qu'ils la voient.</p>`}
         <p class="muted small mt">Glissez les jetons pour déplacer personnages et PNJ en direct.</p>
 
         <h4 class="mt"><i class="fa-solid fa-smog"></i> Brouillard de guerre</h4>
-        <label class="check"><input type="checkbox" data-bind="fog|enabled" data-structure="1" ${fog.enabled ? 'checked' : ''}> Activer le brouillard</label>
+        <label class="check"><input type="checkbox" data-bind="fog:${m.id}|enabled" data-structure="1" ${fog.enabled ? 'checked' : ''}> Activer le brouillard</label>
         ${fog.enabled ? `<div class="row wrap mt">${brushBtn('reveal', 'fa-eye', 'Révéler')}${brushBtn('hide', 'fa-eye-slash', 'Masquer')}
             ${rt.brush ? '<button class="btn sm ghost" data-act="gm.brush" data-mode=""><i class="fa-solid fa-hand"></i> Déplacer</button>' : ''}</div>
         <div class="row mt"><span class="lbl">Pinceau</span><select data-brushsize class="w-sel">${[1, 2, 3, 5, 8].map((n) => `<option value="${n}" ${n === rt.brushSize ? 'selected' : ''}>${n} case${n > 1 ? 's' : ''}</option>`).join('')}</select>
-            <span class="lbl">Case</span><input type="number" min="10" step="10" class="w-num" data-bind="fog|cell" data-structure="1" value="${esc(fog.cell)}" title="Taille d'une case en pixels (change la grille)"></div>
+            <span class="lbl">Case</span><input type="number" min="10" step="10" class="w-num" data-bind="fog:${m.id}|cell" data-structure="1" value="${esc(fog.cell)}" title="Taille d'une case en pixels (change la grille)"></div>
         <div class="row mt"><button class="btn ghost sm" data-act="gm.fogAll" data-reveal="1">Tout révéler</button><button class="btn ghost sm" data-act="gm.fogAll" data-reveal="0">Tout masquer</button></div>
         <p class="muted small">${rt.brush ? 'Cliquez-glissez sur la carte pour peindre.' : 'Choisissez Révéler ou Masquer puis peignez sur la carte.'} Les PNJ sous le brouillard sont invisibles pour les joueurs.</p>` : ''}
 
         <h4 class="mt"><i class="fa-solid fa-skull"></i> PNJ & ennemis</h4>
-        ${s.map.npcs.map((n) => `<div class="token-row"><span class="avatar npc" style="--c:${esc(n.color)}"><i class="fa-solid fa-skull"></i></span>
+        ${m.npcs.map((n) => `<div class="token-row">${n.avatar ? avatarHtml(n) : `<span class="avatar npc" style="--c:${esc(n.color)}"><i class="fa-solid fa-skull"></i></span>`}
             <input data-bind="npc:${n.id}|name" value="${esc(n.name)}" class="grow">
-            <input type="color" data-bind="npc:${n.id}|color" data-structure="1" value="${esc(n.color)}" class="w-color">
+            ${n.hpMax ? `<input type="number" class="w-hp" data-bind="npc:${n.id}|hp" value="${esc(n.hp)}" title="PV (sur ${esc(n.hpMax)})">` : ''}
+            ${n.refId && findBank(s, n.refId) ? `<button class="icon-btn" data-act="gm.bankInfo" data-id="${n.refId}" title="Fiche"><i class="fa-solid fa-circle-info"></i></button>` : `<input type="color" data-bind="npc:${n.id}|color" data-structure="1" value="${esc(n.color)}" class="w-color">`}
             <label class="check" title="Visible des joueurs"><input type="checkbox" data-bind="npc:${n.id}|visible" data-structure="1" ${n.visible ? 'checked' : ''}><i class="fa-solid fa-eye"></i></label>
             <button class="icon-btn danger" data-act="gm.delNpc" data-id="${n.id}" title="Retirer"><i class="fa-solid fa-xmark"></i></button></div>`).join('')}
-        <form class="row mt" data-submit="gm.addNpc"><input name="name" placeholder="Garde, Dragon…" required class="grow"><button class="btn sm"><i class="fa-solid fa-plus"></i> PNJ</button></form>
+        ${bankOpts ? `<form class="row mt" data-submit="gm.addBank"><select name="bank" class="grow">${bankOpts}</select>
+            <label class="check" title="Posé masqué : invisible des joueurs jusqu'à ce que vous cochiez l'œil"><input type="checkbox" name="hidden"><i class="fa-solid fa-eye-slash"></i></label>
+            <button class="btn sm"><i class="fa-solid fa-plus"></i> Poser</button></form>` : ''}
+        <form class="row mt" data-submit="gm.addNpc"><input name="name" placeholder="PNJ rapide : Garde, Dragon…" required class="grow"><button class="btn sm ghost"><i class="fa-solid fa-plus"></i> PNJ</button></form>
 
         <h4 class="mt">Agents</h4>
         ${s.characters.map((c) => {
-        const t = s.map.tokens[c.id];
+        const t = m.tokens[c.id];
         return `<div class="token-row">${avatarHtml(c)}<span class="grow">${esc(c.name)}</span>
-                ${t ? `<label class="check" title="Visible des joueurs"><input type="checkbox" data-bind="token:${c.id}|visible" data-structure="1" ${t.visible !== false ? 'checked' : ''}><i class="fa-solid fa-eye"></i></label>
+                ${t ? `<label class="check" title="Visible des joueurs"><input type="checkbox" data-bind="token:${m.id}:${c.id}|visible" data-structure="1" ${t.visible !== false ? 'checked' : ''}><i class="fa-solid fa-eye"></i></label>
                 <button class="icon-btn danger" data-act="gm.untoken" data-id="${c.id}" title="Retirer de la carte"><i class="fa-solid fa-xmark"></i></button>`
         : `<button class="btn ghost sm" data-act="gm.token" data-id="${c.id}">Placer</button>`}</div>`;
     }).join('')}
-        ${s.map.image ? '' : '<p class="muted small mt">Configurez l\'image de la carte dans Planifier > Carte.</p>'}`);
+        ${m.image ? '' : '<p class="muted small mt">Configurez l\'image de cette carte dans Planifier › Cartes.</p>'}`);
 }
 
 // ---------------------------------------------------------------- Messages
@@ -450,6 +512,13 @@ document.addEventListener('input', (e) => {
 document.addEventListener('input', (e) => {
     if (e.target.dataset?.brushsize === undefined || !rt) return;
     rt.brushSize = toInt(e.target.value, 2);
+});
+// Choix de la carte affichée dans l'onglet Carte du MJ (ne change pas ce que voient les joueurs).
+document.addEventListener('change', (e) => {
+    if (e.target.dataset?.gmmap === undefined || !rt) return;
+    rt.mapId = e.target.value;
+    rt.brush = null;
+    renderMap();
 });
 
 // ---------------------------------------------------------------- Actions
@@ -538,15 +607,73 @@ registerActions({
         rt.dice.label = '';
         store.commit('structure');
     },
-    'gm.shareMap': () => { store.state.map.shared = !store.state.map.shared; store.commit('structure'); },
-    'gm.token': (el) => {
+    'gm.shareMap': () => {
         const s = store.state;
-        if (!s.map.image) throw new Error('Aucune carte configurée.');
-        const { x, y } = rt.map?.center() || { x: s.map.width / 2, y: s.map.height / 2 };
-        s.map.tokens[el.dataset.id] = { x, y, visible: true };
+        s.mapShared = !s.mapShared;
+        if (s.mapShared) logEvent(s, `Carte affichée : ${s.map.name}`);
         store.commit('structure');
     },
-    'gm.untoken': (el) => { delete store.state.map.tokens[el.dataset.id]; store.commit('structure'); },
+    'gm.showMap': (el) => {
+        const s = store.state;
+        const m = findMap(s, el.dataset.id);
+        if (!m) return;
+        s.activeMapId = m.id;
+        s.mapShared = true;
+        logEvent(s, `Carte affichée : ${m.name}`);
+        store.commit('structure');
+        toast(`Les joueurs voient maintenant « ${m.name} ».`, 'ok');
+    },
+    'gm.token': (el) => {
+        const m = gmMap();
+        if (!m.image) throw new Error('Aucune image pour cette carte.');
+        const { x, y } = rt.map?.center() || { x: m.width / 2, y: m.height / 2 };
+        m.tokens[el.dataset.id] = { x, y, visible: true };
+        store.commit('structure');
+    },
+    'gm.untoken': (el) => { delete gmMap().tokens[el.dataset.id]; store.commit('structure'); },
+    'gm.addBank': (form) => {
+        const m = gmMap();
+        if (!m.image) throw new Error('Aucune image pour cette carte.');
+        const { x, y } = rt.map?.center() || {};
+        const n = spawnFromBank(store.state, m.id, form.bank.value, { x, y, visible: !form.hidden.checked });
+        store.commit('structure');
+        toast(`${n.name} posé${n.visible ? '' : ' (masqué)'}.`, 'ok');
+    },
+    'gm.bankInfo': (el) => {
+        const b = findBank(store.state, el.dataset.id);
+        if (!b) return;
+        const page = b.loreId && lorePage(store.state, b.loreId);
+        const m = modal(b.name, `<div class="stack">
+            <div class="row">${avatarHtml(b, 'xl')}<div><b>${esc(b.kind)}</b><p class="muted">PV max ${esc(b.hpMax)}</p></div></div>
+            ${b.stats ? `<section class="card"><h4>Caractéristiques</h4><p class="pre">${esc(b.stats)}</p></section>` : ''}
+            ${b.desc ? `<section class="card"><h4>Description</h4><p class="pre">${esc(b.desc)}</p></section>` : ''}
+            ${b.notes ? `<section class="card"><h4>Notes MJ</h4><p class="pre">${esc(b.notes)}</p></section>` : ''}
+            ${page ? `<button class="btn ghost" data-act="gm.codexPage" data-id="${esc(page.id)}"><i class="fa-solid fa-book"></i> Fiche du codex</button>` : ''}</div>`);
+        rt.infoModal = m;
+    },
+    'gm.scene': (el) => {
+        const s = store.state;
+        const done = launchScene(s, el.dataset.id, [...onlineChars()]);
+        rt.mapId = s.activeMapId;
+        store.commit('structure');
+        toast(`Scène lancée${done.length ? ' : ' + done.join(', ') : ''}.`, 'ok', 6000);
+    },
+    'gm.sceneDone': (el) => {
+        const s = store.state;
+        const sc = s.scenes.find((x) => x.id === el.dataset.id);
+        if (!sc) return;
+        sc.done = !sc.done;
+        if (sc.done && s.session.sceneId === sc.id) s.session.sceneId = '';
+        store.commit('structure');
+    },
+    'gm.codexPage': (el) => {
+        rt.infoModal?.close();
+        rt.infoModal = null;
+        showCodexPage(el.dataset.id);
+        rt.tab = 'codex';
+        renderTabs();
+        mountPanel();
+    },
     'gm.chatWith': (el) => { rt.chatId = el.dataset.id; renderChat(); },
     'gm.send': (form) => {
         if (!rt.chatId) throw new Error('Choisissez un personnage.');
@@ -596,20 +723,19 @@ registerActions({
     'gm.fogAll': async (el) => {
         const reveal = el.dataset.reveal === '1';
         if (!(await confirmBox(reveal ? 'Révéler toute la carte ?' : 'Recouvrir toute la carte de brouillard ?'))) return;
-        fillFog(store.state.map, reveal);
+        fillFog(gmMap(), reveal);
         store.commit('structure');
     },
     'gm.addNpc': (form) => {
-        const s = store.state;
-        if (!s.map.image) throw new Error('Aucune carte configurée.');
-        const { x, y } = rt.map?.center() || { x: s.map.width / 2, y: s.map.height / 2 };
-        s.map.npcs.push(normalizeNpc({ name: form.name.value.trim(), x, y }));
+        const m = gmMap();
+        if (!m.image) throw new Error('Aucune image pour cette carte.');
+        const { x, y } = rt.map?.center() || { x: m.width / 2, y: m.height / 2 };
+        m.npcs.push(normalizeNpc({ name: form.name.value.trim(), x, y }));
         form.reset();
         store.commit('structure');
     },
     'gm.delNpc': (el) => {
-        const m = store.state.map;
-        m.npcs = m.npcs.filter((n) => n.id !== el.dataset.id);
+        for (const m of store.state.maps) m.npcs = m.npcs.filter((n) => n.id !== el.dataset.id);
         store.commit('structure');
     },
 });

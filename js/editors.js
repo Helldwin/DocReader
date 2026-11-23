@@ -3,7 +3,7 @@
 import { store } from './store.js';
 import { registerActions } from './ui.js';
 import { esc, avatarHtml, pickFile, resizeImage, readDataUrl, toast, confirmBox, fmtDateTime, download, modal } from './util.js';
-import { findChar, findDoc, docKind, newDocument, findShop, findTrack, normalizeShop, normalizeShopItem, normalizeTrack } from './iris-file.js';
+import { findChar, findDoc, docKind, newDocument, findShop, findTrack, findBank, normalizeShop, normalizeShopItem, normalizeTrack } from './iris-file.js';
 import { randomSecret, encryptBytes, b64 } from './crypto.js';
 import { adjustMoney, addItem, logEvent } from './game.js';
 import { openDocViewer } from './docviewer.js';
@@ -73,6 +73,33 @@ export function ambienceHtml(state, { live = false } = {}) {
 
 let preview = null; // aperçu local dans "Planifier"
 
+// ---------------------------------------------------------------- Banque PNJ / créatures
+export const BANK_KINDS = ['PNJ', 'Allié', 'Ennemi', 'Créature', 'Boss'];
+
+export function bankEditorHtml(state, b) {
+    const S = `bank:${b.id}`;
+    const placed = state.maps.flatMap((m) => m.npcs.filter((n) => n.refId === b.id).map(() => m.name));
+    return `<div class="char-editor">
+    <section class="card char-head">
+        <button class="avatar-btn" data-act="bank.avatar" data-id="${b.id}" title="Changer le portrait">${avatarHtml(b, 'xl')}<i class="fa-solid fa-camera"></i></button>
+        <div class="grid2 grow">
+            <label>Nom<input data-bind="${S}|name" value="${esc(b.name)}"></label>
+            <label>Type<input data-bind="${S}|kind" value="${esc(b.kind)}" list="bank-kinds"></label>
+            <label>PV max<input type="number" data-bind="${S}|hpMax" value="${esc(b.hpMax)}"></label>
+            <label>Couleur du jeton<input type="color" data-bind="${S}|color" data-structure="1" value="${esc(b.color)}"></label>
+        </div>
+    </section>
+    <datalist id="bank-kinds">${BANK_KINDS.map((k) => `<option value="${esc(k)}">`).join('')}</datalist>
+    <section class="card grid2">
+        <label>Caractéristiques, attaques, capacités<textarea rows="7" data-bind="${S}|stats" placeholder="Attaque : griffes 1d6&#10;Défense 40 %…">${esc(b.stats)}</textarea></label>
+        <label>Description / apparence<textarea rows="7" data-bind="${S}|desc">${esc(b.desc)}</textarea></label>
+        <label class="span2">Notes MJ (motivations, secrets, répliques…)<textarea rows="4" data-bind="${S}|notes">${esc(b.notes)}</textarea></label>
+    </section>
+    <p class="muted small">${placed.length ? `Posé sur : ${esc([...new Set(placed)].join(', '))}` : 'Pas encore posé sur une carte.'}${b.loreId ? ' · Issu du lore importé' : ''}</p>
+    <div class="row end"><button class="btn bad" data-act="bank.delete" data-id="${b.id}"><i class="fa-solid fa-trash"></i> Supprimer cette fiche</button></div>
+    </div>`;
+}
+
 // ---------------------------------------------------------------- Personnage
 export function charEditorHtml(state, c, { live = false } = {}) {
     const S = `char:${c.id}`;
@@ -90,6 +117,10 @@ export function charEditorHtml(state, c, { live = false } = {}) {
     const docs = state.documents.map((d) => `
         <label class="check"><input type="checkbox" data-act="char.toggleDoc" data-id="${c.id}" data-doc="${d.id}" ${c.docs.includes(d.id) || d.public ? 'checked' : ''} ${d.public ? 'disabled title="Document public"' : ''}>
         ${esc(d.title)} <small class="muted">${esc(d.category)}${d.public ? ' · public' : ''}</small></label>`).join('') || '<p class="muted">Aucun document dans la bibliothèque.</p>';
+    const fields = c.fields.map((f, i) => `<tr>
+            <td class="w-key2"><input data-bind="field:${c.id}:${i}|label" value="${esc(f.label)}" placeholder="Âge, Titre, Force…"></td>
+            <td><input data-bind="field:${c.id}:${i}|value" value="${esc(f.value)}"></td>
+            <td class="w-act"><button class="icon-btn danger" data-act="char.delField" data-id="${c.id}" data-index="${i}" title="Retirer"><i class="fa-solid fa-trash"></i></button></td></tr>`).join('');
     const ledger = live ? state.ledger.filter((l) => l.charId === c.id || l.to === c.id).slice(-15).reverse().map((l) => ledgerLine(state, l, c.id)).join('') || '<li class="muted">Aucune transaction.</li>' : '';
 
     return `<div class="char-editor">
@@ -101,6 +132,13 @@ export function charEditorHtml(state, c, { live = false } = {}) {
             <label>Statut<input data-bind="${S}|status" value="${esc(c.status)}" placeholder="Blessé, Empoisonné…"></label>
             <label>Couleur du jeton<input type="color" data-bind="${S}|color" data-structure="1" value="${esc(c.color)}"></label>
         </div>
+    </section>
+
+    <section class="card">
+        <h4><i class="fa-solid fa-id-badge"></i> Identité <small class="muted">— champs libres visibles du joueur (titre, âge, profession, caractéristiques…)</small></h4>
+        ${fields ? `<table class="table"><tbody>${fields}</tbody></table>` : ''}
+        <div class="row wrap mt"><button class="btn ghost sm" data-act="char.addField" data-id="${c.id}"><i class="fa-solid fa-plus"></i> Ajouter un champ</button>
+            ${state.rules.fieldPresets?.length ? `<button class="btn ghost sm" data-act="char.presetFields" data-id="${c.id}" title="${esc(state.rules.fieldPresets.join(', '))}"><i class="fa-solid fa-list-check"></i> Champs de la campagne</button>` : ''}</div>
     </section>
 
     <section class="card">
@@ -242,6 +280,20 @@ registerActions({
         form.reset();
         store.commit('structure');
     },
+    'char.addField': (el) => {
+        mustChar(el).fields.push({ label: '', value: '' });
+        store.commit('structure');
+    },
+    'char.delField': (el) => {
+        mustChar(el).fields.splice(Number(el.dataset.index), 1);
+        store.commit('structure');
+    },
+    'char.presetFields': (el) => {
+        const c = mustChar(el);
+        const have = new Set(c.fields.map((f) => f.label.toLowerCase()));
+        for (const label of store.state.rules.fieldPresets) if (!have.has(label.toLowerCase())) c.fields.push({ label, value: '' });
+        store.commit('structure');
+    },
     'char.delItem': (el) => {
         const c = mustChar(el);
         c.inventory = c.inventory.filter((i) => i.id !== el.dataset.item);
@@ -269,7 +321,7 @@ registerActions({
         if (!(await confirmBox(`Supprimer définitivement ${c.name} ?`, 'Supprimer'))) return;
         const s = store.state;
         s.characters = s.characters.filter((x) => x.id !== c.id);
-        delete s.map.tokens[c.id];
+        for (const m of s.maps) delete m.tokens[c.id];
         for (const [k, v] of Object.entries(s.session.assignments)) if (v === c.id) delete s.session.assignments[k];
         store.commit('structure', { deleted: c.id });
     },
@@ -284,6 +336,7 @@ registerActions({
         if (!d || !(await confirmBox(`Supprimer « ${d.title} » ?`, 'Supprimer'))) return;
         s.documents = s.documents.filter((x) => x.id !== d.id);
         for (const c of s.characters) c.docs = c.docs.filter((x) => x !== d.id);
+        for (const sc of s.scenes) { sc.grantDocs = sc.grantDocs.filter((x) => x !== d.id); if (sc.docId === d.id) sc.docId = ''; }
         if (s.session.spotlight?.docId === d.id) s.session.spotlight = null;
         store.commit('structure');
     },
@@ -335,6 +388,24 @@ registerActions({
 });
 
 registerActions({
+    'bank.avatar': async (el) => {
+        const b = findBank(store.state, el.dataset.id);
+        const f = await pickFile('image/*');
+        if (!b || !f) return;
+        b.avatar = await resizeImage(f, 160);
+        store.commit('structure');
+    },
+    'bank.delete': async (el) => {
+        const s = store.state;
+        const b = findBank(s, el.dataset.id);
+        if (!b || !(await confirmBox(`Supprimer la fiche « ${b.name} » ? Les jetons déjà posés restent sur les cartes.`, 'Supprimer'))) return;
+        s.bestiary = s.bestiary.filter((x) => x !== b);
+        for (const sc of s.scenes) sc.npcs = sc.npcs.filter((id) => id !== b.id);
+        store.commit('structure');
+    },
+});
+
+registerActions({
     'shop.add': () => {
         store.state.shops.push(normalizeShop({ name: 'Nouvelle boutique' }));
         store.commit('structure');
@@ -344,6 +415,7 @@ registerActions({
         const shop = findShop(s, el.dataset.id);
         if (!shop || !(await confirmBox(`Supprimer la boutique « ${shop.name} » ?`, 'Supprimer'))) return;
         s.shops = s.shops.filter((x) => x !== shop);
+        for (const sc of s.scenes) sc.shopIds = sc.shopIds.filter((x) => x !== shop.id);
         store.commit('structure');
     },
     'shop.toggle': (el) => {
@@ -373,6 +445,7 @@ registerActions({
         const t = findTrack(s, el.dataset.id);
         if (!t || !(await confirmBox(`Supprimer « ${t.name} » ?`, 'Supprimer'))) return;
         s.ambience.tracks = s.ambience.tracks.filter((x) => x !== t);
+        for (const sc of s.scenes) if (sc.trackId === t.id) sc.trackId = '';
         if (s.ambience.music?.trackId === t.id) s.ambience.music = null;
         store.commit('structure');
     },

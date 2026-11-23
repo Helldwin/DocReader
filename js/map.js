@@ -106,7 +106,7 @@ export class LiveMap {
             const t = cfg.tokens?.[c.id];
             if (t) out.push({ key: 'c:' + c.id, id: c.id, kind: 'char', name: c.name, color: c.color, avatar: c.avatar, x: t.x, y: t.y, hidden: t.visible === false });
         }
-        for (const n of cfg.npcs || []) out.push({ key: 'n:' + n.id, id: n.id, kind: 'npc', name: n.name, color: n.color, x: n.x, y: n.y, hidden: n.visible === false });
+        for (const n of cfg.npcs || []) out.push({ key: 'n:' + n.id, id: n.id, kind: 'npc', name: n.name, color: n.color, avatar: n.avatar, x: n.x, y: n.y, hidden: n.visible === false });
         return out;
     }
 

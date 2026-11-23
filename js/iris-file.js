@@ -4,7 +4,7 @@
 import { uid, randomCode } from './util.js';
 import { randomSecret } from './crypto.js';
 
-export const FORMAT_VERSION = 1;
+export const FORMAT_VERSION = 2;
 
 export const DEFAULT_STATS = [
     { key: 'FOR', label: 'Force' },
@@ -35,6 +35,7 @@ export function newCharacter(state, name = 'Nouvel agent') {
         name,
         color: COLORS[state.characters.length % COLORS.length],
         stats,
+        fields: (state.rules.fieldPresets || []).map((label) => ({ label, value: '' })),
     }, state.rules);
 }
 
@@ -60,11 +61,13 @@ export function normalizeCharacter(c = {}, rules) {
         hpMax: num(c.hpMax, 10),
         money: num(c.money, 0),
         stats,
+        fields: (c.fields || []).map((f) => ({ label: String(f.label || ''), value: String(f.value ?? '') })), // infos libres visibles du joueur (âge, titre…)
         inventory: (c.inventory || []).map((i) => ({ id: i.id || uid('i'), name: i.name || 'Objet', qty: num(i.qty, 1), desc: i.desc || '' })),
         docs: Array.isArray(c.docs) ? [...c.docs] : [],
         bio: c.bio || '',
         gmNotes: c.gmNotes || '',
         secret: c.secret || randomSecret(),
+        loreId: c.loreId || '',  // fiche d'origine dans le .lore importé
     };
 }
 
@@ -100,7 +103,80 @@ export function normalizeTrack(t = {}) {
 }
 
 export function normalizeNpc(n = {}) {
-    return { id: n.id || uid('n'), name: n.name || 'PNJ', color: n.color || '#ff3b3b', x: num(n.x, 0), y: num(n.y, 0), visible: n.visible !== false };
+    return {
+        id: n.id || uid('n'), name: n.name || 'PNJ', color: n.color || '#ff3b3b', x: num(n.x, 0), y: num(n.y, 0), visible: n.visible !== false,
+        refId: n.refId || '', avatar: n.avatar || '', hp: num(n.hp, 0), hpMax: num(n.hpMax, 0),
+    };
+}
+
+/** Fiche de la banque de PNJ / créatures (modèle réutilisable, posé sur la carte à la demande). */
+export function normalizeBankEntry(b = {}) {
+    return {
+        id: b.id || uid('b'),
+        name: b.name || 'PNJ',
+        kind: b.kind || 'PNJ',          // PNJ | Allié | Ennemi | Créature…
+        color: b.color || '#ff3b3b',
+        avatar: b.avatar || '',
+        hp: num(b.hp, 10),
+        hpMax: num(b.hpMax, 10),
+        stats: b.stats || '',           // texte libre (caractéristiques, attaques…)
+        desc: b.desc || '',
+        notes: b.notes || '',
+        loreId: b.loreId || '',
+    };
+}
+
+/** Scène du scénario : tout ce qu'il faut lancer d'un clic pendant la session. */
+export function normalizeScene(sc = {}) {
+    return {
+        id: sc.id || uid('sc'),
+        title: sc.title || 'Nouvelle scène',
+        session: num(sc.session, 0),    // n° de session prévue (0 = non planifiée)
+        summary: sc.summary || '',      // déroulé / notes MJ
+        goals: sc.goals || '',          // objectifs, indices à donner
+        mapId: sc.mapId || '',
+        shareMap: sc.shareMap !== false,
+        trackId: sc.trackId || '',
+        docId: sc.docId || '',          // document montré à tous au lancement
+        grantDocs: Array.isArray(sc.grantDocs) ? [...sc.grantDocs] : [], // documents donnés aux personnages présents
+        npcs: Array.isArray(sc.npcs) ? [...sc.npcs] : [],               // fiches de la banque posées (masquées) sur la carte
+        shopIds: Array.isArray(sc.shopIds) ? [...sc.shopIds] : [],      // boutiques ouvertes au lancement
+        codex: Array.isArray(sc.codex) ? [...sc.codex] : [],            // pages du codex liées
+        done: !!sc.done,
+    };
+}
+
+export function normalizeMap(m = {}, i = 0) {
+    return {
+        id: m.id || uid('m'),
+        name: m.name || (i ? `Carte ${i + 1}` : 'Carte principale'),
+        image: m.image || '',
+        width: num(m.width, 0),
+        height: num(m.height, 0),
+        markers: (m.markers || []).map((k) => ({ name: k.name || '', x: num(k.x, 0), y: num(k.y, 0), desc: k.desc || '', icon: k.icon || '', loreId: k.loreId || '' })),
+        tokens: { ...(m.tokens || {}) },
+        npcs: (m.npcs || []).map(normalizeNpc),
+        fog: { enabled: !!m.fog?.enabled, cell: Math.max(10, num(m.fog?.cell, 50)), revealed: m.fog?.revealed || '' },
+        loreId: m.loreId || '',
+    };
+}
+
+export function newMap(state, name) {
+    return normalizeMap({ name: name || `Carte ${state.maps.length + 1}` }, state.maps.length);
+}
+
+/** Codex importé d'un .lore (Amsel Suite) : pages, diagrammes, illustrations. Réservé au MJ. */
+function normalizeLore(l) {
+    if (!l || !Array.isArray(l.pages)) return null;
+    return {
+        source: l.source || '',
+        importedAt: num(l.importedAt, Date.now()),
+        title: l.title || '',
+        synopsis: l.synopsis || '',
+        pages: l.pages,
+        diagrams: Array.isArray(l.diagrams) ? l.diagrams : [],
+        images: l.images && typeof l.images === 'object' ? l.images : {},
+    };
 }
 
 const clampNum = (v, min, max, def) => { const n = Number(v); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def; };
@@ -113,8 +189,11 @@ export function normalize(raw = {}) {
         dice,
         currency: rulesIn.currency || 'Crédits',
         partyHpVisible: rulesIn.partyHpVisible !== false,
+        fieldPresets: Array.isArray(rulesIn.fieldPresets) ? rulesIn.fieldPresets.map(String).filter(Boolean) : [], // champs d'identité proposés à chaque fiche
     };
-    const map = raw.map || {};
+    // v1 : une seule carte dans `map` → v2 : `maps[]` + carte active.
+    const mapsIn = Array.isArray(raw.maps) && raw.maps.length ? raw.maps : [raw.map || {}];
+    const maps = mapsIn.map(normalizeMap);
     const state = {
         format: 'iris',
         version: FORMAT_VERSION,
@@ -132,16 +211,12 @@ export function normalize(raw = {}) {
         rules,
         characters: [],
         documents: (raw.documents || []).map(normalizeDocument),
-        map: {
-            image: map.image || '',
-            width: num(map.width, 0),
-            height: num(map.height, 0),
-            markers: (map.markers || []).map((m) => ({ name: m.name || '', x: num(m.x, 0), y: num(m.y, 0), desc: m.desc || '', icon: m.icon || '' })),
-            tokens: { ...(map.tokens || {}) },
-            npcs: (map.npcs || []).map(normalizeNpc),
-            fog: { enabled: !!map.fog?.enabled, cell: Math.max(10, num(map.fog?.cell, 50)), revealed: map.fog?.revealed || '' },
-            shared: !!map.shared,
-        },
+        maps,
+        activeMapId: maps.some((m) => m.id === raw.activeMapId) ? raw.activeMapId : maps[0].id, // carte montrée aux joueurs
+        mapShared: raw.mapShared ?? !!raw.map?.shared,
+        bestiary: (raw.bestiary || []).map(normalizeBankEntry),
+        scenes: (raw.scenes || []).map(normalizeScene),
+        lore: normalizeLore(raw.lore),
         shops: (raw.shops || []).map(normalizeShop),
         ambience: { tracks: (raw.ambience?.tracks || []).map(normalizeTrack), music: null, sfx: null },
         log: Array.isArray(raw.log) ? raw.log : [],
@@ -155,9 +230,23 @@ export function normalize(raw = {}) {
             spotlight: null,
             startedAt: num(raw.session?.startedAt, 0),          // début de la session en cours (brouillon de rapport)
             lastSession: raw.session?.lastSession || null,       // { startedAt, endedAt } de la précédente
+            sceneId: raw.session?.sceneId || '',                 // scène en cours
         },
     };
     state.characters = (raw.characters || []).map((c) => normalizeCharacter(c, rules));
+    return withMapAccessor(state);
+}
+
+/**
+ * `state.map` = carte active (celle que voient les joueurs). Propriété non énumérable :
+ * elle n'est ni sérialisée dans le .iris ni copiée dans l'autosave — seul `maps[]` l'est.
+ */
+export function withMapAccessor(state) {
+    Object.defineProperty(state, 'map', {
+        configurable: true,
+        enumerable: false,
+        get() { return this.maps.find((m) => m.id === this.activeMapId) || this.maps[0]; },
+    });
     return state;
 }
 
@@ -196,6 +285,11 @@ export const findChar = (state, id) => state.characters.find((c) => c.id === id)
 export const findDoc = (state, id) => state.documents.find((d) => d.id === id);
 export const findShop = (state, id) => state.shops.find((s) => s.id === id);
 export const findTrack = (state, id) => state.ambience.tracks.find((t) => t.id === id);
+export const findMap = (state, id) => state.maps.find((m) => m.id === id);
+export const findBank = (state, id) => state.bestiary.find((b) => b.id === id);
+export const findScene = (state, id) => state.scenes.find((x) => x.id === id);
+export const findNpc = (state, id) => { for (const m of state.maps) { const n = m.npcs.find((x) => x.id === id); if (n) return n; } return null; };
+export const lorePage = (state, id) => state.lore?.pages.find((p) => p.id === id) || null;
 
 /** Type d'affichage d'un document, déduit de sa source. */
 export function docKind(doc) {
