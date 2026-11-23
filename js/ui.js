@@ -4,7 +4,8 @@
 //  - data-bind="scope|chemin"  → champ lié directement à l'état (store), sans code par champ
 //      scopes : state, meta, gm, rules, dice, map[:<mapId>], char:<id>, item:<charId>:<itemId>,
 //               field:<charId>:<index>, doc:<id>, stat:<index>, marker:<mapId>:<index>, journal:<id>,
-//               token:<mapId>:<charId>, npc:<id>, fog[:<mapId>], bank:<id>, scene:<id>, shop…, track…
+//               token:<mapId>:<charId>, npc:<id>, fog[:<mapId>], bank:<id>, scene:<id>, shop…, track…,
+//               combo:<entrée de combat>, mapnote:<mapId>:<noteId>, table:<id>, timer
 //      data-kind : int | float | tags | list  (sinon texte / case à cocher)
 import { store } from './store.js';
 import { toast, setPath, toInt } from './util.js';
@@ -12,6 +13,8 @@ import { findChar, findDoc, findMap, findNpc, findBank, findScene } from './iris
 
 const actions = {};
 export function registerActions(obj) { Object.assign(actions, obj); }
+/** Exécute une action enregistrée depuis le code (ex. : ouverture d'un résultat de recherche). */
+export function runAction(name, el = { dataset: {} }) { return actions[name]?.(el); }
 
 export function resolveScope(scope) {
     const s = store.state;
@@ -36,6 +39,10 @@ export function resolveScope(scope) {
         case 'fog': return a ? findMap(s, a)?.fog : s.map.fog;
         case 'bank': return findBank(s, a);
         case 'scene': return findScene(s, a);
+        case 'combo': return s.combat.order.find((o) => o.id === a);
+        case 'mapnote': return findMap(s, a)?.notes.find((n) => n.id === b);
+        case 'table': return s.tables.find((t) => t.id === a);
+        case 'timer': return s.session.timer;
         case 'assign': return s.session.assignments;
         case 'shop': return s.shops.find((x) => x.id === a);
         case 'shopitem': return s.shops.find((x) => x.id === a)?.items.find((i) => i.id === b);

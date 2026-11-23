@@ -1,6 +1,6 @@
 // Vue Joueur : rejoint une session par code, reçoit sa fiche filtrée depuis le navigateur du MJ.
 import { registerActions, rerender, tabsHtml } from './ui.js';
-import { esc, avatarHtml, hpBar, fmtTime, toast, beep, modal, uid, setMuted, muted } from './util.js';
+import { esc, avatarHtml, hpBar, fmtTime, toast, beep, modal, uid, setMuted, muted, aliveFirst, deadCls, deadMark } from './util.js';
 import { Client } from './net.js';
 import { prefs } from './storage.js';
 import { OUTCOME_LABEL, describeRoll } from './dice.js';
@@ -12,6 +12,8 @@ import { renderJournal, fetchJournal } from './journal.js';
 import { CONFIG } from './config.js';
 import { AmbiencePlayer } from './audio.js';
 import { showRollOverlay } from './rolloverlay.js';
+import { TimerDisplay, combatBannerHtml } from './timer.js';
+import { debounce, isDead } from './util.js';
 
 const STATUS = {
     connecting: ['Connexion…', 'warn'],
@@ -33,15 +35,18 @@ export function mountPlayer(el, { code, name, onExit }) {
     rt = {
         el, code, name, onExit, view: null, status: 'connecting', tab: 'sheet',
         seenRolls: null, seenChat: null, unread: 0, assets: new Map(), pending: new Map(),
-        spotTs: null, spotModal: null, map: null, journal: null,
+        spotTs: null, spotModal: null, map: null, journal: null, pingMode: false, notesDraft: null, timer: null,
         audio: new AmbiencePlayer((src) => asset(src)),
     };
     el.innerHTML = `<div class="player">
         <header class="topbar" id="pv-head"></header>
         <div id="pv-tabs"></div>
+        <div id="pv-strip" class="pv-strip"><span id="pv-timer" class="hidden"></span><div id="pv-combat" class="grow"></div></div>
         <main id="pv-panel" class="pv-panel"></main>
         <div id="pv-roll" class="roll-overlay hidden"></div>
+        <div id="pv-flash" class="screen-flash hidden"></div>
     </div>`;
+    rt.timer = new TimerDisplay(el.querySelector('#pv-timer'));
     rt.client = new Client(code, { t: 'hello', clientId: clientId(), name }, {
         onStatus: (s) => { rt.status = s; renderHead(); if (s !== 'connected' && !rt.view) renderWaiting(); },
         onMessage: onMessage,
@@ -56,6 +61,7 @@ export function unmountPlayer() {
     rt.client?.stop();
     rt.audio?.stop();
     rt.map?.destroy();
+    rt.timer?.destroy();
     rt.spotModal?.close();
     rt = null;
 }
@@ -128,6 +134,10 @@ function onView(v) {
         rt.spotModal?.close();
         rt.spotModal = null;
     }
+    notifyChanges(prev, v);
+    rt.timer.set(v.timer);
+    rt.el.querySelector('#pv-combat').innerHTML = combatBannerHtml(v.combat, v.me?.id);
+    rt.el.querySelector('#pv-strip').classList.toggle('empty', !v.timer && !v.combat);
     if (rt.tab === 'map' && !v.map) rt.tab = 'sheet';
     const structural = !prev || !!prev.me !== !!v.me || !!prev.map !== !!v.map || !!prev.shops?.length !== !!v.shops?.length;
     renderHead();
@@ -135,6 +145,36 @@ function onView(v) {
     renderTabs();
     if (structural) mountPanel(); else refreshPanel();
 }
+
+/** Ce qui vient de changer pour le joueur : document ou objet reçu, mort, soins. */
+function notifyChanges(prev, v) {
+    const a = prev?.me, b = v.me;
+    if (!a || !b || a.id !== b.id) return;
+    const docsBefore = new Set(prev.docs.map((d) => d.id));
+    const fresh = v.docs.filter((d) => !docsBefore.has(d.id));
+    if (fresh.length) { beep(980, 0.08); setTimeout(() => beep(1320, 0.1), 110); fresh.forEach((d) => toast(`📄 Nouveau document : ${d.title}`, 'ok', 6000)); }
+    const qty = (inv) => inv.reduce((m, i) => { m[i.name] = (m[i.name] || 0) + i.qty; return m; }, {});
+    const qa = qty(a.inventory), qb = qty(b.inventory);
+    const got = Object.entries(qb).filter(([n, q]) => q > (qa[n] || 0));
+    if (got.length) { beep(880, 0.08); got.forEach(([n, q]) => toast(`🎒 Objet reçu : ${n}${q - (qa[n] || 0) > 1 ? ' ×' + (q - (qa[n] || 0)) : ''}`, 'ok', 5000)); }
+    if (b.money > a.money) toast(`🪙 +${b.money - a.money} ${v.campaign.currency}`, 'ok', 3500);
+    const wasDead = isDead(a), dead = isDead(b);
+    if (dead && !wasDead) flash('dead', 'Vous êtes à terre…', [196, 147, 110]);
+    else if (!dead && wasDead) flash('heal', 'Vous revenez à vous !', [523, 659, 784]);
+    else if (b.hp < a.hp) flash('hurt', `−${a.hp - b.hp} PV`, [180]);
+    else if (b.hp > a.hp) flash('heal', `+${b.hp - a.hp} PV`, [660, 880]);
+}
+
+function flash(kind, text, notes) {
+    const el = rt.el.querySelector('#pv-flash');
+    el.className = `screen-flash ${kind}`;
+    el.innerHTML = `<span>${esc(text)}</span>`;
+    notes.forEach((f, i) => setTimeout(() => beep(f, kind === 'dead' ? 0.35 : 0.12, kind === 'dead' ? 'sawtooth' : 'triangle'), i * 160));
+    clearTimeout(rt.flashT);
+    rt.flashT = setTimeout(() => el.classList.add('hidden'), kind === 'dead' ? 4200 : 1600);
+}
+
+const sendNotes = debounce((text) => { rt?.client.send({ t: 'notes', text }); }, 700);
 
 // ---------------------------------------------------------------- Rendu
 function renderHead() {
@@ -144,7 +184,7 @@ function renderHead() {
     const [label, tone] = STATUS[rt.status] || STATUS.connecting;
     rt.el.querySelector('#pv-head').innerHTML = `
         ${me ? avatarHtml(me, 'lg') : '<svg class="sigil" viewBox="0 0 100 100"><polygon points="50,6 94,90 6,90"/><circle cx="50" cy="64" r="17"/><circle cx="50" cy="64" r="5" fill="currentColor"/></svg>'}
-        <div class="pv-id"><b>${esc(me?.name || 'Agent non assigné')}</b><small>${esc(v?.campaign.title || 'I.R.I.S.')}${me?.status ? ' · ' + esc(me.status) : ''}</small></div>
+        <div class="pv-id"><b>${esc(me?.name || 'Personnage non assigné')}</b><small>${esc(v?.campaign.title || 'I.R.I.S.')}${me?.status ? ' · ' + esc(me.status) : ''}</small></div>
         ${me ? `<div class="pv-vitals">${hpBar(me.hp, me.hpMax)}<span class="money"><i class="fa-solid fa-coins"></i> ${esc(me.money)} ${esc(v.campaign.currency)}</span></div>` : ''}
         <span class="grow"></span>
         <span class="pill ${tone}">${label}</span>
@@ -159,7 +199,7 @@ function renderWaiting() {
         <div class="spinner"></div>
         <h2>${connected ? 'En attente d\'attribution' : 'Connexion à la session'}</h2>
         <p class="muted">${connected ? `Vous êtes dans la salle. Le MJ va vous attribuer votre personnage, ${esc(rt.name)}.` : `Code <b class="mono">${esc(rt.code)}</b> — le MJ doit avoir lancé la session.`}</p>
-        <p class="muted small">Vos passages classifiés et vos documents deviendront accessibles une fois l'agent assigné.</p></div>`;
+        <p class="muted small">Vos passages classifiés et vos documents deviendront accessibles une fois votre personnage assigné.</p></div>`;
 }
 
 function tabs() {
@@ -192,7 +232,8 @@ function mountPanel() {
             <form class="chat-form" data-submit="pv.send"><input name="text" placeholder="Message privé au MJ (question, intention, secret…)" autocomplete="off" required>
             <button class="btn"><i class="fa-solid fa-paper-plane"></i></button></form></section>`;
     } else if (rt.tab === 'map') {
-        p.innerHTML = '<div id="pv-map" class="map-box tall"></div>';
+        p.innerHTML = `<div class="pv-map-wrap"><div id="pv-map" class="map-box tall"></div>
+            <button class="btn sm map-ping-btn ${rt.pingMode ? '' : 'ghost'}" data-act="pv.pingMode" title="Clic sur la carte = signal visible par tous (ou Alt+clic)"><i class="fa-solid fa-location-crosshairs"></i> Ping</button></div>`;
     } else if (rt.tab === 'journal') {
         p.innerHTML = `<div class="journal-wrap"><p class="muted small"><i class="fa-solid fa-user-secret"></i> Connecté en tant que <b>${esc(rt.view.me.name)}</b> : les passages qui vous concernent sont déclassifiés.</p><div id="pv-journal" class="journal-list"><p class="muted">Chargement…</p></div></div>`;
         loadJournal();
@@ -208,11 +249,19 @@ function refreshPanel() {
     const me = v.me;
     const c = rt.el.querySelector('#pv-content');
     if (rt.tab === 'sheet') {
-        const stats = v.campaign.stats.map((s) => `<div class="stat-tile"><small>${esc(s.label)}</small><b>${esc(me.stats[s.key] ?? 0)}</b></div>`).join('');
+        const canRoll = v.campaign.playerRolls && v.campaign.playerRolls !== 'off' && !isDead(me);
+        const pending = new Set(v.myRequests || []);
+        const stats = v.campaign.stats.map((s) => (canRoll
+            ? `<button class="stat-tile rollable ${pending.has(s.key) ? 'pending' : ''}" data-act="pv.roll" data-stat="${esc(s.key)}" title="${pending.has(s.key) ? 'En attente du MJ' : 'Lancer le dé'}"><small>${esc(s.label)}</small><b>${esc(me.stats[s.key] ?? 0)}</b>${pending.has(s.key) ? '<i class="fa-solid fa-hourglass-half"></i>' : '<i class="fa-solid fa-dice-d20"></i>'}</button>`
+            : `<div class="stat-tile"><small>${esc(s.label)}</small><b>${esc(me.stats[s.key] ?? 0)}</b></div>`)).join('');
+        if (rt.notesDraft !== null && rt.notesDraft === (me.playerNotes || '')) rt.notesDraft = null;
+        const notes = rt.notesDraft ?? me.playerNotes ?? '';
         const fields = (me.fields || []).filter((f) => f.label || f.value).map((f) => `<div class="field-tile"><small>${esc(f.label)}</small><b>${esc(f.value)}</b></div>`).join('');
         rerender(c, `${fields ? `<section class="card"><h4><i class="fa-solid fa-id-badge"></i> Identité</h4><div class="field-tiles">${fields}</div></section>` : ''}
-            <section class="card"><h4><i class="fa-solid fa-chart-simple"></i> Statistiques</h4><div class="stat-tiles">${stats}</div></section>
+            <section class="card"><h4><i class="fa-solid fa-chart-simple"></i> Statistiques ${canRoll ? `<small class="muted">— cliquez pour lancer${v.campaign.playerRolls === 'validate' ? ' (validé par le MJ)' : ''}</small>` : ''}</h4><div class="stat-tiles">${stats}</div></section>
             ${me.bio ? `<section class="card"><h4><i class="fa-solid fa-user"></i> Dossier</h4><p class="pre">${esc(me.bio)}</p></section>` : ''}
+            <section class="card"><h4><i class="fa-solid fa-book-open"></i> Mon carnet <small class="muted">— vos notes, gardées d'une session à l'autre (le MJ peut les lire)</small></h4>
+                <textarea id="pv-notes" rows="6" placeholder="Indices, noms, pistes, soupçons…">${esc(notes)}</textarea></section>
             <section class="card"><h4><i class="fa-solid fa-dice-d20"></i> Derniers jets</h4><ul class="roll-log">${v.rolls.slice().reverse().slice(0, 12).map((r) => `<li>${rollHtml(r)}</li>`).join('') || '<li class="muted">Aucun jet.</li>'}</ul></section>`);
     } else if (rt.tab === 'inv') {
         const others = v.roster.filter((x) => x.id !== me.id);
@@ -222,7 +271,7 @@ function refreshPanel() {
             <section class="card"><h4><i class="fa-solid fa-coins"></i> Finances — ${esc(me.money)} ${esc(v.campaign.currency)}</h4>
             ${others.length ? `<form class="row wrap" data-submit="pv.pay"><select name="to">${others.map((o) => `<option value="${o.id}">${esc(o.name)}</option>`).join('')}</select>
                 <input name="amount" type="number" min="1" max="${Math.max(1, me.money)}" placeholder="Montant" required class="w-num"><input name="text" placeholder="Motif" class="grow">
-                <button class="btn"><i class="fa-solid fa-money-bill-transfer"></i> Virer</button></form>` : '<p class="muted small">Aucun autre agent connecté pour un virement.</p>'}
+                <button class="btn"><i class="fa-solid fa-money-bill-transfer"></i> Virer</button></form>` : '<p class="muted small">Aucun autre joueur connecté pour un virement.</p>'}
             <ul class="ledger mt">${v.ledger.slice().reverse().map((l) => ledgerLine(fakeState(v), l, me.id)).join('') || '<li class="muted">Aucune transaction.</li>'}</ul></section>`);
     } else if (rt.tab === 'docs') {
         rerender(c, `<div class="doc-grid">${v.docs.map((d) => `<button class="doc-tile" data-act="pv.doc" data-id="${d.id}">
@@ -242,8 +291,8 @@ function refreshPanel() {
         }).join('') || '<li class="muted">Rien à vendre pour le moment.</li>'}</ul></section>`).join('')
             + `<p class="muted small center">Solde : <b>${esc(me.money)} ${cur}</b></p>`);
     } else if (rt.tab === 'party') {
-        rerender(c, `<div class="party">${v.roster.map((x) => `<div class="card party-card ${x.id === me.id ? 'me' : ''}">${avatarHtml(x, 'lg')}
-            <div class="grow"><b>${esc(x.name)} ${x.online ? '<i class="dot ok"></i>' : '<i class="dot"></i>'}</b>${x.status ? `<small>${esc(x.status)}</small>` : ''}
+        rerender(c, `<div class="party">${aliveFirst(v.roster).map((x) => `<div class="card party-card ${x.id === me.id ? 'me' : ''} ${deadCls(x)}">${avatarHtml(x, 'lg')}
+            <div class="grow"><b>${esc(x.name)}${deadMark(x)} ${x.online ? '<i class="dot ok"></i>' : '<i class="dot"></i>'}</b>${x.status ? `<small>${esc(x.status)}</small>` : ''}
             ${x.hpMax !== undefined ? hpBar(x.hp, x.hpMax) : ''}</div></div>`).join('')}</div>`);
     } else if (rt.tab === 'chat') {
         const box = rt.el.querySelector('#pv-msgs');
@@ -264,14 +313,19 @@ async function renderMap() {
     const v = rt.view;
     const box = rt.el.querySelector('#pv-map');
     if (!box || !v.map) return;
-    rt.map ||= new LiveMap(box, { editable: false });
+    if (!rt.map || rt.map.el !== box) {
+        // L'onglet a été redessiné : la carte doit être reconstruite sur le nouvel élément.
+        rt.map?.destroy();
+        rt.map = new LiveMap(box, { editable: false, fogFit: true, onPing: (x, y) => { if (rt.client.send({ t: 'mapPing', x, y })) beep(900, 0.05); } });
+    }
+    rt.map.setPingMode(rt.pingMode);
     let image = v.map.image;
     if (image.startsWith('asset:')) {
         const key = image.slice(6);
         if (!rt.assets.has(key)) { asset(image); box.innerHTML ||= '<p class="muted center pad">Téléchargement de la carte…</p>'; return; }
         image = rt.assets.get(key);
     }
-    rt.map.update({ ...v.map, image }, v.map.chars);
+    rt.map.update({ ...v.map, image, pings: v.pings }, v.map.chars);
 }
 
 async function loadJournal() {
@@ -297,6 +351,13 @@ function showRoll(r) {
 // ---------------------------------------------------------------- Actions
 registerActions({
     'pv.tab': (el) => { rt.tab = el.dataset.tab; renderTabs(); mountPanel(); },
+    'pv.roll': (el) => {
+        if ((rt.view.myRequests || []).includes(el.dataset.stat)) return toast('Demande déjà envoyée au MJ.', 'info');
+        if (!rt.client.send({ t: 'rollReq', statKey: el.dataset.stat })) throw new Error('Non connecté.');
+        beep(700, 0.05);
+        if (rt.view.campaign.playerRolls === 'validate') toast('Demande de jet envoyée au MJ.', 'info', 2500);
+    },
+    'pv.pingMode': (el) => { rt.pingMode = !rt.pingMode; rt.map?.setPingMode(rt.pingMode); el.classList.toggle('ghost', !rt.pingMode); },
     'pv.quit': () => { const f = rt.onExit; unmountPlayer(); f?.(); },
     'pv.mute': () => { setMuted(!muted); rt.audio.setMuted(muted); renderHead(); },
     'pv.buy': (form) => {
@@ -331,4 +392,12 @@ registerActions({
         rt.client.send({ t: 'giveMoney', to: form.to.value, amount: Number(form.amount.value), text: form.text.value });
         form.reset();
     },
+});
+
+
+// Carnet du joueur : envoyé au MJ pendant la frappe (il est enregistré dans le .iris).
+document.addEventListener('input', (e) => {
+    if (e.target.id !== 'pv-notes' || !rt) return;
+    rt.notesDraft = e.target.value;
+    sendNotes(e.target.value);
 });

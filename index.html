@@ -183,6 +183,25 @@
         .danger-modere { background: rgba(250,204,21,0.15); color: #facc15; border: 1px solid #facc15; }
         .danger-eleve { background: rgba(249,115,22,0.15); color: #fb923c; border: 1px solid #fb923c; }
         .danger-critique { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid #f87171; }
+
+        /* ---------- ACCÈS AGENT (dossier, archives) ---------- */
+        .agent-avatar { width: 42px; height: 42px; border-radius: 50%; border: 2px solid currentColor; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #000; }
+        .agent-avatar img { width: 100%; height: 100%; object-fit: cover; }
+        .agent-avatar.xl { width: 96px; height: 96px; font-size: 2rem; }
+        .agent-card { border: 1px solid currentColor; border-radius: 8px; background: rgba(0,0,0,0.5); padding: 16px; }
+        .agent-card h4 { font-family: 'Orbitron', sans-serif; font-size: 11px; letter-spacing: .15em; text-transform: uppercase; opacity: .8; margin-bottom: 10px; }
+        .agent-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+        .agent-tile { border: 1px solid rgba(255,217,0,0.35); border-radius: 6px; padding: 8px 10px; background: #000; }
+        .agent-tile small { display: block; font-size: 9px; letter-spacing: .12em; text-transform: uppercase; opacity: .6; }
+        .agent-tile b { font-family: 'VT323', monospace; font-size: 1.5rem; line-height: 1.1; font-weight: normal; }
+        .agent-tile.text b { font-family: inherit; font-size: .85rem; }
+        .agent-hp { height: 10px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; }
+        .agent-hp span { display: block; height: 100%; background: #4ade80; }
+        .doc-card { border: 1px solid currentColor; border-radius: 6px; background: rgba(0,0,0,0.4); padding: 14px; cursor: pointer; transition: all .2s ease; text-align: left; display: flex; gap: 12px; align-items: flex-start; color: inherit; }
+        .doc-card:hover { background: rgba(255,255,255,0.06); transform: translateY(-2px); box-shadow: 0 0 16px rgba(255,217,0,0.3); }
+        .doc-card i { font-size: 1.4rem; margin-top: 2px; }
+        .doc-paper { background: #f2e8c9; color: #2b1d0e; font-family: 'Special Elite', monospace; padding: 28px; border-radius: 4px; white-space: pre-wrap; line-height: 1.7; text-align: left; }
+        .declassified { background: rgba(74,222,128,0.12); color: #4ade80; border-bottom: 1px dashed #4ade80; }
     </style>
 </head>
 <body class="theme-rapport h-screen w-screen overflow-hidden relative transition-all duration-700 ease-in-out">
@@ -241,14 +260,19 @@
                 </div>
             </div>
 
-            <div class="bg-black/60 border border-current/30 p-4 rounded mb-8 w-full text-left flex items-center justify-between">
-                <div>
-                    <p class="text-[10px] uppercase opacity-70">Utilisateur Actuel</p>
-                    <p class="font-bold tracking-widest">INVITÉ_7482</p>
+            <div class="bg-black/60 border border-current/30 p-4 rounded mb-8 w-full text-left flex items-center justify-between gap-3">
+                <div class="flex items-center gap-3 min-w-0">
+                    <div id="hub-avatar" class="agent-avatar shrink-0"><i class="fa-solid fa-user-secret"></i></div>
+                    <div class="min-w-0">
+                        <p class="text-[10px] uppercase opacity-70">Utilisateur Actuel</p>
+                        <p id="hub-user" class="font-bold tracking-widest truncate">INVITÉ_7482</p>
+                    </div>
                 </div>
-                <div class="text-right">
+                <div class="text-right shrink-0">
                     <p class="text-[10px] uppercase opacity-70">Habilitation</p>
-                    <p class="font-bold tracking-widest text-red-500">NIVEAU 2 (RESTREINT)</p>
+                    <p id="hub-clearance" class="font-bold tracking-widest text-red-500">NIVEAU 2 (RESTREINT)</p>
+                    <button id="hub-login" type="button" onclick="requireAgent(() => goBack())" class="mt-1 text-[10px] uppercase tracking-widest underline opacity-80 hover:opacity-100">S'identifier</button>
+                    <button id="hub-logout" type="button" onclick="logoutAgent()" class="hidden mt-1 text-[10px] uppercase tracking-widest underline opacity-60 hover:opacity-100">Déconnexion</button>
                 </div>
             </div>
 
@@ -295,26 +319,22 @@
                 <div class="border-4 border-red-600 text-red-600 font-stamp text-xl md:text-2xl uppercase tracking-widest px-6 py-3 rotate-[-9deg] bg-black/80">Accès Refusé</div>
             </div>
 
-            <h2 id="auth-title" class="text-xl font-black mb-6 tracking-wider text-center uppercase font-ui">Protocole de Récupération d'Archive</h2>
+            <h2 id="auth-title" class="text-xl font-black mb-2 tracking-wider text-center uppercase font-ui">Identification de l'agent</h2>
+            <p class="text-[10px] uppercase tracking-widest opacity-60 text-center mb-6">Votre code agent personnel déchiffre l'ensemble de vos accès : archives, dossier, cartographie, journal et codex.</p>
 
-            <div class="flex flex-col gap-5 mb-6">
-                <div id="doc-type-section">
-                    <label class="block text-[10px] uppercase tracking-widest mb-2 opacity-70">Classification du document</label>
-                    <div id="doc-type-grid" class="grid grid-cols-2 gap-3">
-                        <p class="col-span-2 text-center text-xs uppercase opacity-60 tracking-widest py-4">Chargement des classifications...</p>
-                    </div>
-                </div>
-
+            <div class="flex flex-col gap-4 mb-6">
                 <div class="relative">
-                    <label class="block text-[10px] uppercase tracking-widest mb-1 opacity-70">Code d'autorisation</label>
-                    <input type="password" id="access-code" placeholder="••••••••" onkeydown="if(event.key==='Enter') validateCode();" class="w-full px-4 py-3 bg-black/60 border border-current rounded focus:outline-none focus:ring-1 focus:ring-current text-center tracking-widest text-lg font-bold">
+                    <label class="block text-[10px] uppercase tracking-widest mb-1 opacity-70">Code agent</label>
+                    <input type="password" id="access-code" placeholder="XXXX-XXXX-XXXX" autocomplete="off" onkeydown="if(event.key==='Enter') validateCode();" class="w-full px-4 py-3 bg-black/60 border border-current rounded focus:outline-none focus:ring-1 focus:ring-current text-center tracking-widest text-lg font-bold uppercase">
                 </div>
-
-                <p id="error-msg" class="text-red-500 text-[10px] text-center uppercase hidden font-bold mt-1"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Échec. Code ou classification incorrects.</p>
+                <label class="flex items-center gap-2 text-[10px] uppercase tracking-widest opacity-70 cursor-pointer select-none">
+                    <input type="checkbox" id="remember-agent" class="accent-yellow-400"> Mémoriser sur cet appareil
+                </label>
+                <p id="error-msg" class="text-red-500 text-[10px] text-center uppercase hidden font-bold mt-1"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Échec. Code inconnu.</p>
             </div>
 
             <div class="flex flex-col gap-3">
-                <button onclick="validateCode()" id="auth-submit-btn" class="iris w-full py-3 font-black hover:bg-transparent hover:text-current border border-current transition-all uppercase tracking-widest text-xs rounded font-ui">Déchiffrer l'archive</button>
+                <button onclick="validateCode()" id="auth-submit-btn" class="iris w-full py-3 font-black hover:bg-transparent hover:text-current border border-current transition-all uppercase tracking-widest text-xs rounded font-ui">S'identifier</button>
                 <button onclick="goBack()" class="iris w-full py-2 text-xs opacity-60 hover:opacity-100 transition-all uppercase font-bold mt-2">Annuler et retourner au poste de contrôle</button>
             </div>
         </div>
@@ -391,7 +411,8 @@
                 <i class="fa-solid fa-power-off mr-2"></i> Fermer
             </button>
             <div class="text-[10px] md:text-xs tracking-widest uppercase font-bold opacity-80 font-ui">Cartographie — Réseau I.R.I.S.</div>
-            <div class="w-[86px]"></div>
+            <select id="map-select" onchange="loadMap(this.value)" class="hidden bg-black border border-current rounded px-2 py-1 text-[10px] uppercase tracking-widest max-w-[40%]"></select>
+            <div id="map-select-spacer" class="w-[86px]"></div>
         </div>
         <div id="map-wrap" class="flex-grow rounded-lg border border-current/40 overflow-hidden relative">
             <div id="map-leaflet" class="w-full h-full"></div>
@@ -433,12 +454,51 @@
         </div>
     </div>
 
+    <!-- 8. ARCHIVES DE L'AGENT -->
+    <div id="screen-docs" class="hidden flex-col h-full w-full p-3 md:p-6 relative z-10 overflow-hidden">
+        <div class="flex justify-between items-center w-full z-10 px-4 py-3 mb-4 rounded-lg border border-current/40 bg-black/80 shadow-[0_0_20px_rgba(255,217,0,0.2)] shrink-0">
+            <button onclick="goBack()" class="px-3 py-1.5 border border-current rounded hover:bg-white/10 transition-all uppercase text-[10px] font-bold">
+                <i class="fa-solid fa-power-off mr-2"></i> Fermer
+            </button>
+            <div class="text-[10px] md:text-xs tracking-widest uppercase font-bold opacity-80 font-ui">Archives — Accès agent</div>
+            <div class="w-[86px]"></div>
+        </div>
+        <div class="flex-grow overflow-y-auto max-w-4xl w-full mx-auto pb-6">
+            <div id="docs-cats" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5"></div>
+            <div id="docs-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 content-start"></div>
+        </div>
+    </div>
+
+    <!-- 9. DOSSIER PERSONNEL -->
+    <div id="screen-dossier" class="hidden flex-col h-full w-full p-3 md:p-6 relative z-10 overflow-hidden">
+        <div class="flex justify-between items-center w-full z-10 px-4 py-3 mb-4 rounded-lg border border-current/40 bg-black/80 shadow-[0_0_20px_rgba(255,217,0,0.2)] shrink-0">
+            <button onclick="goBack()" class="px-3 py-1.5 border border-current rounded hover:bg-white/10 transition-all uppercase text-[10px] font-bold">
+                <i class="fa-solid fa-power-off mr-2"></i> Fermer
+            </button>
+            <div class="text-[10px] md:text-xs tracking-widest uppercase font-bold opacity-80 font-ui">Dossier Personnel</div>
+            <div class="w-[86px]"></div>
+        </div>
+        <div id="dossier-body" class="flex-grow overflow-y-auto max-w-4xl w-full mx-auto pb-6 flex flex-col gap-4 text-left"></div>
+    </div>
+
+    <!-- MODALE DOCUMENT (image / texte) -->
+    <div id="modal-doc" class="hidden fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-50">
+        <div class="max-w-4xl w-full max-h-[92vh] flex flex-col rounded-lg border border-current bg-black text-current relative">
+            <div class="flex items-center justify-between gap-3 px-4 py-3 border-b border-current/30">
+                <div class="min-w-0"><p id="modal-doc-cat" class="text-[9px] uppercase tracking-widest opacity-60"></p><h3 id="modal-doc-title" class="font-black uppercase tracking-wider font-ui truncate"></h3></div>
+                <button onclick="closeDocModal()" class="opacity-60 hover:opacity-100 transition-opacity"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div id="modal-doc-body" class="overflow-auto p-4 flex-grow"></div>
+        </div>
+    </div>
+
     <!-- MODALE FICHE BESTIAIRE -->
     <div id="modal-bestiary" class="hidden fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-50 transition-all duration-300">
         <div class="max-w-lg w-full p-6 rounded-lg shadow-2xl border border-current bg-black text-current relative">
             <button onclick="closeBestiaryModal()" class="absolute top-3 right-3 opacity-60 hover:opacity-100 transition-opacity">
                 <i class="fa-solid fa-xmark text-lg"></i>
             </button>
+            <img id="bestiary-modal-img" class="hidden w-24 h-24 object-cover rounded border border-current/50 float-right ml-3 mb-2" alt="">
             <div class="flex items-center gap-2 mb-2">
                 <i id="bestiary-modal-icon" class="fa-solid fa-skull-crossbones text-xl"></i>
                 <h3 id="bestiary-modal-name" class="text-lg font-black uppercase tracking-wider font-ui"></h3>
@@ -452,29 +512,24 @@
     </div>
 
     <script>
-        const _0x4a2b = "==gdzNWP0VHc0V3bmUWdyRXPlx2Zul2cmATPkl2Z/IWdw9yMzJFeIZ3MV5UO5JFNUxkSfRHdKZlerJ1VqZTTGFTaxYjMIplUS52dGRlcJV2SwcGa24kZxwmUphXQodEW0MWYrlmbOlzVoF0dnlmUIFldx0CWDFEUy8SZvQ2LzRXZlh2ckFWZyB3cv02bj5SZsd2bvdmLzN2bk9yL6MHc0RHa";
-
         let currentType = '';
-        let selectedDocType = '';
         let typeLabelMap = {};
         let flipBookInstance = null;
         let pdfInstance = null;
         let audioCtx = null;
         let isMuted = false;
         let totalPagesCount = 0;
-        let csvDataCache = [];
         let clockInterval = null;
-        let portalMode = 'archives';
         let leafletMap = null;
         let journalData = [];
         let bestiaryData = [];
-        const RESERVED_TYPE_DOSSIER = 'dossier';
-
-        function _getDbUrl() {
-            try {
-                return atob(_0x4a2b.split('').reverse().join(''));
-            } catch (e) { return ''; }
-        }
+        let agent = null;          // paquet déchiffré de l'agent identifié (voir js/portal-data.js)
+        let pendingAfterLogin = null;
+        let returnScreen = null;   // écran à rouvrir en fermant un document
+        let docsCategory = '';
+        const blobUrls = [];
+        const SCREENS = ['screen-choice', 'screen-auth', 'screen-loading', 'screen-viewer', 'screen-map', 'screen-journal', 'screen-bestiaire', 'screen-docs', 'screen-dossier'];
+        const AGENT_KEY = 'iris.agentCode';
 
         // ---------------- AUDIO ----------------
         function initAudio() {
@@ -666,101 +721,235 @@
             changeScreen('screen-boot', 'screen-choice');
         }
 
-        // ---------------- PORTAIL / SÉLECTION ----------------
-        function buildTypeGrid(types) {
-            const grid = document.getElementById('doc-type-grid');
-            grid.innerHTML = '';
-            typeLabelMap = {};
-            selectedDocType = '';
+        // ---------------- IDENTIFICATION AGENT ----------------
+        // Un code agent unique déchiffre le paquet de l'agent (fiche, documents + clés, cartes,
+        // bestiaire, clé du journal). Publié depuis le terminal : Planifier › Portail joueurs.
+        function showScreen(id) {
+            SCREENS.forEach(s => { const el = document.getElementById(s); el.classList.add('hidden'); el.classList.remove('flex'); });
+            const el = document.getElementById(id);
+            el.classList.remove('hidden');
+            el.classList.add('flex');
+        }
 
-            if (types.size === 0) {
-                grid.innerHTML = '<p class="col-span-2 text-center text-xs uppercase opacity-60 tracking-widest py-4">Base de données vide</p>';
+        function esc(v) {
+            return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        function storedCode() {
+            try { return sessionStorage.getItem(AGENT_KEY) || localStorage.getItem(AGENT_KEY) || ''; } catch (e) { return ''; }
+        }
+
+        function updateHubUser() {
+            const user = document.getElementById('hub-user');
+            const clr = document.getElementById('hub-clearance');
+            const av = document.getElementById('hub-avatar');
+            document.getElementById('hub-login').classList.toggle('hidden', !!agent);
+            document.getElementById('hub-logout').classList.toggle('hidden', !agent);
+            if (agent) {
+                user.innerText = agent.agent.name.toUpperCase();
+                clr.innerText = 'AGENT IDENTIFIÉ';
+                clr.className = 'font-bold tracking-widest text-green-500';
+                av.innerHTML = agent.agent.avatar ? `<img src="${esc(agent.agent.avatar)}" alt="">` : '<i class="fa-solid fa-user-check"></i>';
+            } else {
+                user.innerText = 'INVITÉ_7482';
+                clr.innerText = 'NIVEAU 2 (RESTREINT)';
+                clr.className = 'font-bold tracking-widest text-red-500';
+                av.innerHTML = '<i class="fa-solid fa-user-secret"></i>';
+            }
+        }
+
+        /** Exécute `next` si un agent est identifié, sinon demande le code puis l'exécute. */
+        function requireAgent(next) {
+            initAudio();
+            playBeep(500, 0.08);
+            if (agent) return next();
+            pendingAfterLogin = next;
+            document.getElementById('access-code').value = '';
+            document.getElementById('error-msg').classList.add('hidden');
+            showScreen('screen-auth');
+            setTimeout(() => document.getElementById('access-code').focus(), 50);
+        }
+
+        async function validateCode() {
+            initAudio();
+            const input = document.getElementById('access-code');
+            const code = input.value.trim();
+            const errorMsg = document.getElementById('error-msg');
+            errorMsg.classList.add('hidden');
+            if (!code) {
+                errorMsg.innerText = "Veuillez saisir votre code agent.";
+                errorMsg.classList.remove('hidden');
                 return;
             }
-
-            types.forEach(t => {
-                const label = t.toUpperCase();
-                typeLabelMap[t] = label;
-                const card = document.createElement('button');
-                card.type = 'button';
-                card.className = 'doc-type-card';
-                card.dataset.type = t;
-                card.innerHTML = `
-                    <i class="fa-solid ${iconForType(t)} text-lg mb-1"></i>
-                    <span class="block text-[11px] font-bold tracking-widest">${label}</span>
-                    <span class="block text-[9px] opacity-50 tracking-widest mt-1">RÉF. ${pseudoCode(t)}</span>
-                `;
-                card.onclick = () => selectDocType(t, card);
-                grid.appendChild(card);
-            });
-        }
-
-        function selectDocType(type, card) {
-            document.querySelectorAll('.doc-type-card').forEach(c => c.classList.remove('active'));
-            card.classList.add('active');
-            selectedDocType = type;
-            initAudio();
-            playBeep(500, 0.04);
-        }
-
-        function openArchives() { initPortal('archives'); }
-        function openDossier() { initPortal('dossier'); }
-
-        async function initPortal(mode) {
-            portalMode = mode || 'archives';
-            initAudio();
-            playBeep(440, 0.12);
-
-            document.getElementById('loading-icon').className = "fa-solid fa-network-wired absolute inset-0 flex items-center justify-center text-xl animate-pulse";
+            playBeep(880, 0.05);
+            document.getElementById('loading-icon').className = "fa-solid fa-fingerprint absolute inset-0 flex items-center justify-center text-xl animate-pulse";
             clearLog();
-            logLine("Connexion au serveur central...");
-            logLine(portalMode === 'dossier' ? "Localisation du dossier personnel..." : "Acquisition de la liste des archives...");
-            changeScreen('screen-choice', 'screen-loading');
-
-            const targetUrl = _getDbUrl();
-            if (!targetUrl) {
-                showErrorModal("Erreur Système", "Liaison réseau introuvable.");
-                return goBack();
-            }
-
+            logLine("Vérification de l'empreinte du code...");
+            showScreen('screen-loading');
             try {
-                const response = await fetch(targetUrl);
-                const csvText = await response.text();
-                csvDataCache = csvText.split('\n').map(row => row.split(','));
-
-                const authTitle = document.getElementById('auth-title');
-                const submitBtn = document.getElementById('auth-submit-btn');
-                const typeSection = document.getElementById('doc-type-section');
-
-                if (portalMode === 'dossier') {
-                    typeSection.classList.add('hidden');
-                    selectedDocType = RESERVED_TYPE_DOSSIER;
-                    typeLabelMap = { [RESERVED_TYPE_DOSSIER]: 'DOSSIER PERSONNEL' };
-                    authTitle.innerText = "Accès au Dossier Personnel";
-                    submitBtn.innerText = "Déchiffrer le dossier";
-                } else {
-                    typeSection.classList.remove('hidden');
-                    authTitle.innerText = "Protocole de Récupération d'Archive";
-                    submitBtn.innerText = "Déchiffrer l'archive";
-
-                    const types = new Set();
-                    for (let i = 1; i < csvDataCache.length; i++) {
-                        if (csvDataCache[i].length >= 3) {
-                            const t = csvDataCache[i][0].trim().toLowerCase();
-                            if (t && t !== RESERVED_TYPE_DOSSIER) types.add(t);
-                        }
-                    }
-                    buildTypeGrid(types);
-                }
-
-                changeScreen('screen-loading', 'screen-auth');
-                playBeep(600, 0.08);
-
-            } catch (error) {
-                console.error(error);
-                showErrorModal("Échec de Connexion", "Impossible de synchroniser avec la base de données centrale.");
-                goBack();
+                const P = await window.IrisPortalReady;
+                logLine("Localisation du dossier agent...");
+                const bundle = await P.loginAgent(code);
+                logLine("Déchiffrement AES-256-GCM... OK");
+                agent = bundle;
+                const norm = P.normCode(code);
+                try {
+                    sessionStorage.setItem(AGENT_KEY, norm);
+                    if (document.getElementById('remember-agent').checked) localStorage.setItem(AGENT_KEY, norm);
+                } catch (e) { /* stockage indisponible */ }
+                logLine(`Bienvenue, agent ${esc(agent.agent.name)}.`);
+                updateHubUser();
+                playBeep(660, 0.08);
+                await wait(450);
+                const next = pendingAfterLogin;
+                pendingAfterLogin = null;
+                if (next) next(); else goBack();
+            } catch (err) {
+                console.warn(err);
+                showScreen('screen-auth');
+                input.value = '';
+                errorMsg.innerText = err.denied ? "Échec. Code agent inconnu." : (err.message || "Liaison impossible.");
+                errorMsg.classList.remove('hidden');
+                if (err.denied) triggerAccessDenied(); else playSiren();
             }
+        }
+
+        function logoutAgent() {
+            agent = null;
+            try { sessionStorage.removeItem(AGENT_KEY); localStorage.removeItem(AGENT_KEY); } catch (e) { /* ignore */ }
+            blobUrls.splice(0).forEach(u => URL.revokeObjectURL(u));
+            updateHubUser();
+            initAudio();
+            playBeep(300, 0.15);
+        }
+
+        /** Reconnexion silencieuse au démarrage si le code a été mémorisé. */
+        async function autoLogin() {
+            const code = storedCode();
+            if (!code) return;
+            try {
+                const P = await window.IrisPortalReady;
+                agent = await P.loginAgent(code);
+                updateHubUser();
+            } catch (e) {
+                if (e.denied) { try { sessionStorage.removeItem(AGENT_KEY); localStorage.removeItem(AGENT_KEY); } catch (x) { /* ignore */ } }
+            }
+        }
+
+        function docIcon(doc) {
+            if (doc.kind === 'image') return 'fa-image';
+            if (doc.kind === 'text') return 'fa-file-lines';
+            if (doc.kind === 'link') return 'fa-link';
+            return iconForType(doc.category);
+        }
+
+        function docCardHtml(doc) {
+            return `<button type="button" class="doc-card" data-doc="${esc(doc.id)}">
+                <i class="fa-solid ${docIcon(doc)}"></i>
+                <span class="min-w-0"><span class="block font-bold text-sm uppercase tracking-wide font-ui">${esc(doc.title)}</span>
+                <span class="block text-[9px] uppercase opacity-60 tracking-widest mt-1">${esc(doc.category)} · RÉF. ${pseudoCode(doc.id)}</span>
+                ${doc.desc ? `<span class="block text-xs opacity-80 mt-2">${esc(doc.desc)}</span>` : ''}</span></button>`;
+        }
+
+        // Clic sur une carte de document (délégation : pas d'identifiant injecté dans du JS inline).
+        document.addEventListener('click', (e) => {
+            const card = e.target.closest('[data-doc]');
+            if (card) openAgentDoc(card.dataset.doc);
+            const cat = e.target.closest('[data-doccat]');
+            if (cat) { docsCategory = cat.dataset.doccat; playBeep(500, 0.04); showArchives(); }
+        });
+
+        // ---------------- ARCHIVES ----------------
+        function openArchives() { requireAgent(showArchives); }
+        function openDossier() { requireAgent(showDossier); }
+
+        function showArchives() {
+            const docs = agent.docs.filter(d => !d.dossier);
+            const cats = [...new Set(docs.map(d => d.category))];
+            if (docsCategory && !cats.includes(docsCategory)) docsCategory = '';
+            document.getElementById('docs-cats').innerHTML = ['', ...cats].map(c => `
+                <button type="button" class="doc-type-card ${c === docsCategory ? 'active' : ''}" data-doccat="${esc(c)}">
+                    <i class="fa-solid ${c ? iconForType(c) : 'fa-layer-group'} text-lg mb-1"></i>
+                    <span class="block text-[11px] font-bold tracking-widest">${esc((c || 'Toutes').toUpperCase())}</span>
+                    <span class="block text-[9px] opacity-50 tracking-widest mt-1">${c ? docs.filter(d => d.category === c).length : docs.length} DOC. · RÉF. ${pseudoCode(c || 'toutes')}</span>
+                </button>`).join('');
+            const list = docs.filter(d => !docsCategory || d.category === docsCategory);
+            document.getElementById('docs-list').innerHTML = list.map(docCardHtml).join('')
+                || '<p class="col-span-full text-center text-xs uppercase opacity-60 tracking-widest py-8">Aucune archive accessible à votre habilitation.</p>';
+            showScreen('screen-docs');
+        }
+
+        // ---------------- DOSSIER PERSONNEL ----------------
+        function showDossier() {
+            const a = agent.agent;
+            const pct = a.hpMax > 0 ? Math.max(0, Math.min(100, a.hp / a.hpMax * 100)) : 0;
+            const fields = (a.fields || []).filter(f => f.label || f.value).map(f => `<div class="agent-tile text"><small>${esc(f.label)}</small><b>${esc(f.value)}</b></div>`).join('');
+            const stats = (a.stats || []).map(s => `<div class="agent-tile"><small>${esc(s.label)}</small><b>${esc(s.value)}</b></div>`).join('');
+            const inv = (a.inventory || []).map(i => `<li class="py-1 border-b border-current/10"><b>×${esc(i.qty)}</b> ${esc(i.name)}${i.desc ? ` <span class="opacity-60 text-xs">— ${esc(i.desc)}</span>` : ''}</li>`).join('');
+            const docs = agent.docs.filter(d => d.dossier);
+            document.getElementById('dossier-body').innerHTML = `
+                <section class="agent-card flex gap-4 items-center flex-wrap">
+                    <div class="agent-avatar xl">${a.avatar ? `<img src="${esc(a.avatar)}" alt="">` : '<i class="fa-solid fa-user-secret"></i>'}</div>
+                    <div class="flex-grow min-w-[200px]">
+                        <p class="text-[9px] uppercase tracking-widest opacity-60">${esc(agent.campaign.title)} · Réf. ${pseudoCode(a.id)}</p>
+                        <h2 class="text-2xl font-black uppercase tracking-widest font-ui">${esc(a.name)}</h2>
+                        ${a.player ? `<p class="text-xs opacity-70">Opérateur : ${esc(a.player)}</p>` : ''}
+                        ${a.status ? `<p class="text-xs text-red-400 mt-1"><i class="fa-solid fa-triangle-exclamation"></i> ${esc(a.status)}</p>` : ''}
+                        <div class="flex items-center gap-3 mt-2 text-xs flex-wrap"><span class="opacity-70">PV ${esc(a.hp)} / ${esc(a.hpMax)}</span><div class="agent-hp flex-grow max-w-[220px]"><span style="width:${pct}%"></span></div>
+                            <span class="opacity-70"><i class="fa-solid fa-coins"></i> ${esc(a.money)} ${esc(agent.campaign.currency)}</span></div>
+                    </div>
+                </section>
+                ${fields ? `<section class="agent-card"><h4>Identité</h4><div class="agent-tiles">${fields}</div></section>` : ''}
+                ${stats ? `<section class="agent-card"><h4>Compétences</h4><div class="agent-tiles">${stats}</div></section>` : ''}
+                ${a.bio ? `<section class="agent-card"><h4>Dossier</h4><p class="text-sm leading-relaxed whitespace-pre-wrap opacity-90">${esc(a.bio)}</p></section>` : ''}
+                ${inv ? `<section class="agent-card"><h4>Équipement</h4><ul class="text-sm">${inv}</ul></section>` : ''}
+                <section class="agent-card"><h4>Pièces du dossier</h4>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">${docs.map(docCardHtml).join('') || '<p class="text-xs uppercase opacity-60 tracking-widest">Aucune pièce versée au dossier.</p>'}</div></section>
+                <p class="text-[9px] uppercase tracking-widest opacity-40 text-center">Données au ${new Date(agent.publishedAt).toLocaleString('fr-FR')} — session n°${esc(agent.campaign.session)}</p>`;
+            showScreen('screen-dossier');
+        }
+
+        // ---------------- OUVERTURE D'UN DOCUMENT ----------------
+        async function openAgentDoc(id) {
+            const doc = agent && agent.docs.find(d => d.id === id);
+            if (!doc) return;
+            initAudio();
+            playBeep(600, 0.06);
+            if (doc.kind === 'link') { window.open(doc.url, '_blank', 'noopener'); return; }
+            if (doc.kind === 'text') return showDocModal(doc, `<div class="doc-paper">${esc(doc.text)}</div>`);
+            if (doc.kind === 'image') {
+                showDocModal(doc, '<p class="text-center text-xs uppercase opacity-60 tracking-widest py-8">Déchiffrement...</p>');
+                try {
+                    const P = await window.IrisPortalReady;
+                    const url = await P.sealedObjectUrl(doc.src, doc.key, doc.mime || 'image/png');
+                    blobUrls.push(url);
+                    document.getElementById('modal-doc-body').innerHTML = `<img src="${url}" alt="" class="max-w-full mx-auto rounded">${doc.text ? `<div class="doc-paper mt-4">${esc(doc.text)}</div>` : ''}`;
+                } catch (e) {
+                    document.getElementById('modal-doc-body').innerHTML = `<p class="text-center text-red-500 text-xs uppercase py-8">${esc(e.message)}</p>`;
+                }
+                return;
+            }
+            // PDF : visionneuse « livre » historique (même format .enc que les archives existantes).
+            returnScreen = document.getElementById('screen-dossier').classList.contains('flex') ? 'screen-dossier' : 'screen-docs';
+            currentType = doc.category || 'rapport';
+            typeLabelMap = { [currentType]: doc.title };
+            applyTheme(currentType);
+            document.getElementById('loading-icon').className = "fa-solid fa-lock-open absolute inset-0 flex items-center justify-center text-xl animate-pulse";
+            clearLog();
+            showScreen('screen-loading');
+            await loadAndDecryptPDF(doc.src, doc.key);
+        }
+
+        function showDocModal(doc, body) {
+            document.getElementById('modal-doc-cat').innerText = doc.category || '';
+            document.getElementById('modal-doc-title').innerText = doc.title;
+            document.getElementById('modal-doc-body').innerHTML = body;
+            document.getElementById('modal-doc').classList.remove('hidden');
+        }
+
+        function closeDocModal() {
+            document.getElementById('modal-doc').classList.add('hidden');
+            document.getElementById('modal-doc-body').innerHTML = '';
         }
 
         // ---------------- CHIFFREMENT ----------------
@@ -776,54 +965,6 @@
             const encryptedData = encryptedBuffer.slice(28);
             const key = await deriveDecryptKey(password, salt);
             return crypto.subtle.decrypt({ name: "AES-GCM", iv: iv }, key, encryptedData);
-        }
-
-        async function validateCode() {
-            initAudio();
-            const inputCode = document.getElementById('access-code').value.trim();
-            currentType = selectedDocType;
-
-            const errorMsg = document.getElementById('error-msg');
-            errorMsg.classList.add('hidden');
-
-            if (!inputCode || !currentType) {
-                errorMsg.innerText = "Veuillez sélectionner une classification et saisir le code d'accès.";
-                errorMsg.classList.remove('hidden');
-                return;
-            }
-
-            playBeep(880, 0.05);
-            document.getElementById('loading-icon').className = "fa-solid fa-lock-open absolute inset-0 flex items-center justify-center text-xl animate-pulse";
-            clearLog();
-            logLine("Recherche de l'archive...");
-            changeScreen('screen-auth', 'screen-loading');
-
-            let encryptedFileUrl = null;
-
-            for (let i = 1; i < csvDataCache.length; i++) {
-                if (csvDataCache[i].length >= 3) {
-                    const typeSheet = csvDataCache[i][0].trim().toLowerCase();
-                    const codeSheet = csvDataCache[i][1].trim();
-                    const urlSheet = csvDataCache[i][2].trim().replace('\r', '');
-
-                    if (typeSheet === currentType && codeSheet === inputCode) {
-                        encryptedFileUrl = urlSheet;
-                        break;
-                    }
-                }
-            }
-
-            if (encryptedFileUrl) {
-                applyTheme(currentType);
-                await loadAndDecryptPDF(encryptedFileUrl, inputCode);
-            } else {
-                playSiren();
-                changeScreen('screen-loading', 'screen-auth');
-                errorMsg.innerText = "Échec du décryptage. Code ou classification incorrects.";
-                errorMsg.classList.remove('hidden');
-                document.getElementById('access-code').value = "";
-                triggerAccessDenied();
-            }
         }
 
         function applyTheme(type) {
@@ -1090,10 +1231,12 @@
                 if (e.key === 'ArrowLeft') prevPage();
                 if (e.key === 'ArrowRight') nextPage();
                 if (e.key === 'Escape') goBack();
-            } else if (['screen-map', 'screen-journal', 'screen-bestiaire'].some(s => document.getElementById(s).classList.contains('flex'))) {
-                if (e.key === 'Escape') goBack();
+            } else if (!document.getElementById('modal-doc').classList.contains('hidden')) {
+                if (e.key === 'Escape') closeDocModal();
             } else if (!document.getElementById('modal-bestiary').classList.contains('hidden')) {
                 if (e.key === 'Escape') closeBestiaryModal();
+            } else if (['screen-map', 'screen-journal', 'screen-bestiaire', 'screen-docs', 'screen-dossier', 'screen-auth'].some(s => document.getElementById(s).classList.contains('flex'))) {
+                if (e.key === 'Escape') goBack();
             }
         });
 
@@ -1134,13 +1277,10 @@
                 leafletMap = null;
             }
 
-            ['screen-auth', 'screen-loading', 'screen-viewer', 'screen-map', 'screen-journal', 'screen-bestiaire'].forEach(s => {
-                document.getElementById(s).classList.add('hidden');
-                document.getElementById(s).classList.remove('flex');
-            });
-
-            document.getElementById('screen-choice').classList.remove('hidden');
-            document.getElementById('screen-choice').classList.add('flex');
+            pendingAfterLogin = null;
+            const back = returnScreen && agent ? returnScreen : 'screen-choice';
+            returnScreen = null;
+            showScreen(back);
 
             document.body.className = 'theme-rapport h-screen w-screen overflow-hidden relative transition-all duration-700 ease-in-out';
             document.getElementById('crt-overlay').style.display = 'block';
@@ -1154,81 +1294,74 @@
         });
 
         // ---------------- CARTE DU MONDE ----------------
-        async function openMap() {
-            initAudio();
-            playBeep(500, 0.08);
-            changeScreen('screen-choice', 'screen-map');
-            document.getElementById('map-fallback').classList.add('hidden');
-            document.getElementById('map-leaflet').classList.remove('hidden');
-            document.getElementById('map-coords').classList.add('hidden');
-            await loadMap();
+        // Cartes publiées par le MJ (brouillard déjà appliqué), chiffrées dans vault/maps/.
+        function openMap() { requireAgent(showMapScreen); }
+
+        async function showMapScreen() {
+            showScreen('screen-map');
+            const maps = agent.maps || [];
+            const sel = document.getElementById('map-select');
+            sel.innerHTML = maps.map(m => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join('');
+            sel.classList.toggle('hidden', maps.length < 2);
+            document.getElementById('map-select-spacer').classList.toggle('hidden', maps.length >= 2);
+            await loadMap(maps[0] && maps[0].id);
         }
 
-        async function loadMap() {
+        async function loadMap(mapId) {
+            const fallback = document.getElementById('map-fallback');
+            const leafletEl = document.getElementById('map-leaflet');
+            const coordsEl = document.getElementById('map-coords');
+            fallback.classList.add('hidden');
+            leafletEl.classList.remove('hidden');
+            coordsEl.classList.add('hidden');
+            if (leafletMap) { try { leafletMap.remove(); } catch (e) {} leafletMap = null; }
             try {
-                const res = await fetch('data/carte.json');
-                if (!res.ok) throw new Error('data/carte.json introuvable');
-                const carte = await res.json();
-
-                await new Promise((resolve, reject) => {
-                    const img = new Image();
-                    img.onload = resolve;
-                    img.onerror = () => reject(new Error("Image de carte introuvable : " + carte.image));
-                    img.src = carte.image;
-                });
-
-                if (leafletMap) { try { leafletMap.remove(); } catch (e) {} leafletMap = null; }
+                const carte = (agent.maps || []).find(m => m.id === mapId);
+                if (!carte) throw new Error('Aucune carte publiée pour votre habilitation.');
+                const P = await window.IrisPortalReady;
+                const image = await P.sealedObjectUrl(carte.src, carte.key, carte.mime);
+                blobUrls.push(image);
 
                 const w = carte.width, h = carte.height;
                 const bounds = [[0, 0], [h, w]];
-
-                leafletMap = L.map('map-leaflet', { crs: L.CRS.Simple, minZoom: -3, maxZoom: 3 });
-                L.imageOverlay(carte.image, bounds).addTo(leafletMap);
-                leafletMap.fitBounds(bounds);
+                leafletMap = L.map('map-leaflet', { crs: L.CRS.Simple, minZoom: -3, maxZoom: 3, maxBoundsViscosity: 0.85 });
+                L.imageOverlay(image, bounds).addTo(leafletMap);
+                const v = carte.view; // zone révélée par le brouillard de guerre : on cadre dessus
+                if (v) {
+                    const px = Math.max((v.x1 - v.x0) * 0.15, 40), py = Math.max((v.y1 - v.y0) * 0.15, 40);
+                    const rx = Math.max((v.x1 - v.x0) * 0.6, 200), ry = Math.max((v.y1 - v.y0) * 0.6, 200);
+                    leafletMap.fitBounds([[h - (v.y1 + py), v.x0 - px], [h - (v.y0 - py), v.x1 + px]]);
+                    leafletMap.setMaxBounds([[h - (v.y1 + ry), v.x0 - rx], [h - (v.y0 - ry), v.x1 + rx]]);
+                } else {
+                    leafletMap.fitBounds(bounds);
+                }
 
                 (carte.markers || []).forEach(m => {
-                    const latlng = [h - m.y, m.x];
-                    const marker = L.marker(latlng).addTo(leafletMap);
-                    const icon = m.icon ? `<i class="fa-solid ${m.icon} mr-1"></i>` : '';
-                    marker.bindPopup(`<strong>${icon}${m.name || ''}</strong>${m.desc ? `<br>${m.desc}` : ''}`);
+                    const marker = L.marker([h - m.y, m.x]).addTo(leafletMap);
+                    const icon = m.icon ? `<i class="fa-solid ${esc(m.icon)} mr-1"></i>` : '';
+                    marker.bindPopup(`<strong>${icon}${esc(m.name)}</strong>${m.desc ? `<br>${esc(m.desc)}` : ''}`);
                 });
 
-                const coordsEl = document.getElementById('map-coords');
                 coordsEl.classList.remove('hidden');
                 coordsEl.innerText = 'X: -- / Y: --';
-
-                leafletMap.on('mousemove', (e) => {
-                    const x = Math.round(e.latlng.lng);
-                    const y = Math.round(h - e.latlng.lat);
-                    coordsEl.innerText = `X: ${x} / Y: ${y}`;
-                });
-
+                leafletMap.on('mousemove', (e) => { coordsEl.innerText = `X: ${Math.round(e.latlng.lng)} / Y: ${Math.round(h - e.latlng.lat)}`; });
                 leafletMap.on('mouseout', () => { coordsEl.innerText = 'X: -- / Y: --'; });
-
-                leafletMap.on('click', (e) => {
-                    const x = Math.round(e.latlng.lng);
-                    const y = Math.round(h - e.latlng.lat);
-                    const snippet = `{ "name": "", "x": ${x}, "y": ${y}, "desc": "", "icon": "" }`;
-                    if (navigator.clipboard && navigator.clipboard.writeText) {
-                        navigator.clipboard.writeText(snippet).catch(() => {});
-                    }
-                    playBeep(700, 0.05);
-                    coordsEl.innerText = `X: ${x} / Y: ${y} — copié ✓`;
-                });
-
             } catch (error) {
                 console.warn(error);
-                document.getElementById('map-leaflet').classList.add('hidden');
-                document.getElementById('map-coords').classList.add('hidden');
-                document.getElementById('map-fallback').classList.remove('hidden');
+                leafletEl.classList.add('hidden');
+                coordsEl.classList.add('hidden');
+                fallback.querySelector('p').innerText = error.message || 'Carte indisponible.';
+                fallback.classList.remove('hidden');
             }
         }
 
         // ---------------- JOURNAL DE CAMPAGNE ----------------
-        async function openJournal() {
-            initAudio();
-            playBeep(500, 0.08);
-            changeScreen('screen-choice', 'screen-journal');
+        // Journal public (data/journal.json) ; les passages censurés concernant l'agent sont
+        // déclassifiés avec la clé contenue dans son paquet.
+        function openJournal() { requireAgent(showJournalScreen); }
+
+        async function showJournalScreen() {
+            showScreen('screen-journal');
             await renderJournal();
         }
 
@@ -1236,11 +1369,9 @@
             const list = document.getElementById('journal-list');
             list.innerHTML = '<p class="text-center text-xs uppercase opacity-60 tracking-widest py-8">Chargement du journal...</p>';
             try {
-                // Rendu partagé avec la vue joueur (js/journal.js) : les passages censurés
-                // restent chiffrés ici — seuls les joueurs connectés en session peuvent les lire.
                 const J = await window.IrisJournalReady;
                 journalData = await J.fetchJournal('data/journal.json');
-                await J.renderJournal(list, journalData, {});
+                await J.renderJournal(list, journalData, (agent && agent.keys) || {});
             } catch (error) {
                 console.warn(error);
                 list.innerHTML = '<p class="text-center text-xs uppercase opacity-60 tracking-widest py-8">Journal indisponible. Vérifiez data/journal.json.</p>';
@@ -1257,11 +1388,12 @@
         }
 
         // ---------------- BESTIAIRE / CODEX ----------------
-        async function openBestiary() {
-            initAudio();
-            playBeep(500, 0.08);
-            changeScreen('screen-choice', 'screen-bestiaire');
-            await renderBestiary();
+        // Entités que le MJ a marquées « connues des agents » (Planifier › Portail joueurs).
+        function openBestiary() { requireAgent(showBestiaryScreen); }
+
+        async function showBestiaryScreen() {
+            showScreen('screen-bestiaire');
+            renderBestiary();
         }
 
         function dangerClass(danger) {
@@ -1272,36 +1404,28 @@
             return 'danger-faible';
         }
 
-        async function renderBestiary() {
+        function renderBestiary() {
             const grid = document.getElementById('bestiary-grid');
-            grid.innerHTML = '<p class="col-span-full text-center text-xs uppercase opacity-60 tracking-widest py-8">Chargement du codex...</p>';
-            try {
-                const res = await fetch('data/bestiaire.json');
-                if (!res.ok) throw new Error('data/bestiaire.json introuvable');
-                bestiaryData = await res.json();
-
-                if (bestiaryData.length === 0) {
-                    grid.innerHTML = '<p class="col-span-full text-center text-xs uppercase opacity-60 tracking-widest py-8">Codex vide.</p>';
-                    return;
-                }
-
-                grid.innerHTML = '';
-                bestiaryData.forEach((entry, idx) => {
-                    const card = document.createElement('button');
-                    card.type = 'button';
-                    card.className = 'bestiary-card';
-                    card.onclick = () => openBestiaryEntry(idx);
-                    card.innerHTML = `
-                        <p class="font-bold text-sm uppercase tracking-wide font-ui mb-1">${entry.name || 'Entité inconnue'}</p>
-                        <p class="text-[9px] uppercase opacity-60 tracking-widest mb-2">${entry.type || ''}</p>
-                        <span class="danger-badge ${dangerClass(entry.danger)}">${entry.danger || 'Indéterminé'}</span>
-                    `;
-                    grid.appendChild(card);
-                });
-            } catch (error) {
-                console.warn(error);
-                grid.innerHTML = '<p class="col-span-full text-center text-xs uppercase opacity-60 tracking-widest py-8">Codex indisponible. Vérifiez data/bestiaire.json.</p>';
+            bestiaryData = (agent && agent.bestiary) || [];
+            if (bestiaryData.length === 0) {
+                grid.innerHTML = '<p class="col-span-full text-center text-xs uppercase opacity-60 tracking-widest py-8">Aucune entité répertoriée pour le moment.</p>';
+                return;
             }
+            grid.innerHTML = '';
+            bestiaryData.forEach((entry, idx) => {
+                const card = document.createElement('button');
+                card.type = 'button';
+                card.className = 'bestiary-card';
+                card.onclick = () => openBestiaryEntry(idx);
+                card.innerHTML = `
+                    <div class="flex gap-3 items-start">
+                        ${entry.avatar ? `<img src="${esc(entry.avatar)}" alt="" class="w-12 h-12 rounded object-cover border border-current/40 shrink-0">` : ''}
+                        <div><p class="font-bold text-sm uppercase tracking-wide font-ui mb-1">${esc(entry.name || 'Entité inconnue')}</p>
+                        <p class="text-[9px] uppercase opacity-60 tracking-widest mb-2">${esc(entry.type || '')}</p>
+                        <span class="danger-badge ${dangerClass(entry.danger)}">${esc(entry.danger || 'Indéterminé')}</span></div>
+                    </div>`;
+                grid.appendChild(card);
+            });
         }
 
         function openBestiaryEntry(idx) {
@@ -1315,6 +1439,9 @@
             dangerEl.innerText = entry.danger || 'Indéterminé';
             dangerEl.className = 'danger-badge ' + dangerClass(entry.danger);
             document.getElementById('bestiary-modal-desc').innerText = entry.description || '';
+            const img = document.getElementById('bestiary-modal-img');
+            img.classList.toggle('hidden', !entry.avatar);
+            img.src = entry.avatar || '';
             document.getElementById('modal-bestiary').classList.remove('hidden');
         }
 
@@ -1330,14 +1457,19 @@
             setTimeout(() => title.classList.remove('glitch-active'), 150);
         }, 7000);
 
-        window.addEventListener('DOMContentLoaded', runBootSequence);
+        window.addEventListener('DOMContentLoaded', () => { runBootSequence(); autoLogin(); });
     </script>
     <script>
         window.IrisJournalReady = new Promise((resolve) => { window.__resolveIrisJournal = resolve; });
     </script>
+    <script>
+        window.IrisPortalReady = new Promise((resolve) => { window.__resolveIrisPortal = resolve; });
+    </script>
     <script type="module">
         import { renderJournal, fetchJournal } from './js/journal.js';
+        import { loginAgent, normCode, sealedObjectUrl } from './js/portal-data.js';
         window.__resolveIrisJournal({ renderJournal, fetchJournal });
+        window.__resolveIrisPortal({ loginAgent, normCode, sealedObjectUrl });
     </script>
 </body>
 </html>

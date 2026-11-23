@@ -18,6 +18,10 @@ export const CONFIG = {
     // Journal publié (lu par le portail et par la vue joueur).
     JOURNAL_URL: 'data/journal.json',
 
+    // Dépôt GitHub du site (« compte/dépôt ») : sert à lister vault/ quand le navigateur ne peut pas
+    // ouvrir le dossier local (Firefox / Safari). Planifier › Documents › Scanner vault/.
+    GITHUB_REPO: 'Helldwin/DocReader',
+
     // Délai de sauvegarde automatique dans le navigateur (ms).
     AUTOSAVE_DEBOUNCE_MS: 400,
 

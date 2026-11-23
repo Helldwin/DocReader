@@ -3,13 +3,14 @@
 // ambiance sonore. Aucune donnée privée n'est envoyée à un spectateur.
 //   session.html?watch=CODE          → vue spectateur
 //   session.html?watch=CODE&obs=1    → fond transparent, sans effet CRT (incrustation)
-import { esc, avatarHtml, hpBar, uid } from './util.js';
+import { esc, avatarHtml, hpBar, uid, aliveFirst, deadCls, deadMark } from './util.js';
 import { Client } from './net.js';
 import { prefs } from './storage.js';
 import { openDocViewer } from './docviewer.js';
 import { LiveMap } from './map.js';
 import { AmbiencePlayer } from './audio.js';
 import { showRollOverlay, rollLineHtml } from './rolloverlay.js';
+import { TimerDisplay, combatBannerHtml } from './timer.js';
 
 let rt = null;
 
@@ -26,7 +27,9 @@ export function mountSpectator(el, { code, name = 'Stream', obs = false, onExit 
     el.innerHTML = `<div class="spectator">
         <header class="sp-head"><svg class="sigil" viewBox="0 0 100 100"><polygon points="50,6 94,90 6,90"/><circle cx="50" cy="64" r="17"/><circle cx="50" cy="64" r="5" fill="currentColor"/></svg>
             <div class="grow"><b id="sp-title">I.R.I.S.</b><small id="sp-sub">Connexion à la session ${esc(code)}…</small></div>
+            <span id="sp-timer" class="hidden"></span>
             <span id="sp-live" class="pill warn">Connexion…</span></header>
+        <div id="sp-combat" class="sp-combat"></div>
         <main class="sp-main"><div id="sp-map" class="sp-map"></div><aside id="sp-feed" class="sp-feed"></aside></main>
         <footer id="sp-party" class="sp-party"></footer>
         <div id="sp-roll" class="roll-overlay hidden"></div>
@@ -40,6 +43,7 @@ export function mountSpectator(el, { code, name = 'Stream', obs = false, onExit 
         },
         onMessage,
     });
+    rt.timer = new TimerDisplay(el.querySelector('#sp-timer'));
     rt.client.start();
     renderMap();
 }
@@ -48,6 +52,7 @@ export function unmountSpectator() {
     if (!rt) return;
     rt.client?.stop();
     rt.audio?.stop();
+    rt.timer?.destroy();
     rt.map?.destroy();
     rt.spotModal?.close();
     document.body.classList.remove('obs');
@@ -93,6 +98,8 @@ function onView(v) {
     }
     rt.seenRolls = new Set(v.rolls.map((r) => r.id));
     rt.audio.apply(v.ambience);
+    rt.timer.set(v.timer);
+    rt.el.querySelector('#sp-combat').innerHTML = combatBannerHtml(v.combat);
     if (v.spotlight && v.spotlight.ts !== rt.spotTs) {
         rt.spotTs = v.spotlight.ts;
         rt.spotModal?.close();
@@ -102,8 +109,8 @@ function onView(v) {
         rt.spotModal?.close();
         rt.spotModal = null;
     }
-    rt.el.querySelector('#sp-party').innerHTML = v.roster.map((c) => `<div class="sp-agent">${avatarHtml(c, 'lg')}
-        <div><b>${esc(c.name)}</b>${c.status ? `<small>${esc(c.status)}</small>` : ''}${c.hpMax !== undefined ? hpBar(c.hp, c.hpMax) : ''}</div></div>`).join('');
+    rt.el.querySelector('#sp-party').innerHTML = aliveFirst(v.roster).map((c) => `<div class="sp-agent ${deadCls(c)}">${avatarHtml(c, 'lg')}
+        <div><b>${esc(c.name)}${deadMark(c)}</b>${c.status ? `<small>${esc(c.status)}</small>` : ''}${c.hpMax !== undefined ? hpBar(c.hp, c.hpMax) : ''}</div></div>`).join('');
     rt.el.querySelector('#sp-feed').innerHTML = `<h5>Derniers jets</h5><ul class="roll-log">${v.rolls.slice(-6).reverse().map((r) => `<li>${rollLineHtml(r)}</li>`).join('') || '<li class="muted small">—</li>'}</ul>
         ${v.ambience?.music ? `<p class="sp-music"><i class="fa-solid fa-music"></i> ${esc(v.ambience.music.name)}</p>` : ''}`;
     renderMap();
@@ -125,8 +132,8 @@ function renderMap() {
         if (!rt.assets.has(key)) { asset(image); return; }
         image = rt.assets.get(key);
     }
-    if (!rt.map) { box.innerHTML = ''; rt.map = new LiveMap(box, { editable: false }); }
-    rt.map.update({ ...m, image }, m.chars);
+    if (!rt.map) { box.innerHTML = ''; rt.map = new LiveMap(box, { editable: false, fogFit: true }); }
+    rt.map.update({ ...m, image, pings: rt.view.pings }, m.chars);
 }
 
 

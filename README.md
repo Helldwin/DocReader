@@ -3,14 +3,14 @@
 Portail rétrofuturiste pour l'Institut de Recherche et d'Investigation Surnaturelle (I.R.I.S.), utilisé comme hub de campagne JDR :
 - séquence de démarrage terminal au boot
 - hub d'accueil avec bandeau d'avertissement, badge d'habilitation et tuiles de navigation
-- **Archives** : documents chiffrés classés par catégorie, protégés par code d'accès
-- **Dossier Perso** : fiche d'agent individuelle, protégée par le même système de code
-- **Carte du Monde** : carte interactive (pan/zoom, marqueurs) basée sur une image
-- **Journal de Campagne** : compte-rendus de session, chronologiques et dépliables
-- **Bestiaire / Codex** : fiches d'entités classées par niveau de danger
+- **un code agent unique par joueur** : il ouvre tout ce qui le concerne, même sans session en cours
+- **Archives** : documents chiffrés de l'agent, classés par catégorie
+- **Dossier Perso** : fiche d'agent (identité, compétences, PV, équipement, bio) + pièces du dossier
+- **Carte** : cartes publiées par le MJ (brouillard de guerre appliqué), pan/zoom, lieux
+- **Journal de Campagne** : compte-rendus de session, avec les passages censurés déclassifiés pour l'agent
+- **Bestiaire / Codex** : entités rencontrées, classées par niveau de danger
 - alerte "Accès Refusé" (flash + tampon) en cas de code invalide
-- viewer PDF centré avec tampon de classification, horloge de session et thème par type de document
-- support A4 + carré, PageFlip stabilisé
+- viewer PDF « livre » avec tampon de classification, horloge de session et thème par type de document
 - compatible GitHub Pages, 100% statique (aucun serveur/backend requis)
 - **Terminal de session** (`session.html`) : partie en temps réel MJ ↔ joueurs (voir ci-dessous)
 
@@ -19,45 +19,28 @@ Portail rétrofuturiste pour l'Institut de Recherche et d'Investigation Surnatur
 Ouvrir index.html
 ou déployer sur GitHub Pages.
 
-## Brancher votre système réel
+## Accès agent (portail)
 
-Tout est dans index.html (pas d'app.js séparé) :
-- `_getDbUrl()` : endpoint Google Sheet (obfusqué en base64 inversé)
-- `deriveDecryptKey` / `decryptBuffer` : logique PBKDF2 + AES-GCM
-- `vault/*.enc` : archives chiffrées référencées par la feuille (colonnes type, code, url)
+Tout le contenu du portail est produit par le terminal : **Planifier › Portail joueurs › Publier**. Rien n'est à éditer à la main.
 
-## Archives vs Dossier Perso
+1. Chaque personnage a un **code agent** (ex. `K7QM-2XRP-9TDA`, modifiable : on peut reprendre le code que le joueur connaît déjà, 8 caractères minimum). Donnez-le au joueur.
+2. Préparez le contenu dans le .iris : documents donnés au personnage (ou publics), cartes cochées *Portail*, fiches PNJ cochées *Connue des agents*, rapports.
+3. *Publier dans le dossier du dépôt* (Chrome / Edge, écrit directement les fichiers) ou *Télécharger le .zip* (à extraire à la racine du dépôt), puis `git push`.
+4. Sur le portail, le joueur saisit son code une fois (option *Mémoriser sur cet appareil*) : toutes les tuiles s'ouvrent.
 
-Les deux utilisent la même feuille Google Sheet (colonnes `type, code, url`) et le même chiffrement AES.
-- Une ligne avec `type = dossier` n'apparaît **pas** dans la grille des Archives : elle est réservée à la tuile "Dossier Perso" du hub.
-- Pour donner à un joueur l'accès à sa fiche : ajoutez une ligne `dossier, <code du joueur>, <url du .pdf.enc>` (même procédé de chiffrement que pour les autres archives).
-- Un joueur ne peut voir que le dossier correspondant à son propre code — pas de sélection de classification, juste le code.
+| Fichier publié | Contenu |
+|---|---|
+| `data/portal.json` | titre, date de publication, sel public (aucun secret) |
+| `vault/agents/<id>.enc` | **paquet de l'agent**, chiffré avec son code : fiche, liste de ses documents avec leurs clés, cartes, bestiaire connu, clé de déclassification du journal. `<id>` est dérivé du code (PBKDF2) : impossible de savoir quel fichier appartient à qui |
+| `vault/docs/<docId>.enc` | documents importés dans le .iris (PDF, images), chiffrés une seule fois avec leur propre clé |
+| `vault/maps/<mapId>.enc` | cartes, brouillard déjà appliqué (les lieux encore cachés ne sont pas publiés) |
+| `data/journal.json` | journal public ; chaque passage censuré est chiffré avec la clé du personnage concerné |
 
-## Carte du Monde (`data/carte.json`)
-
-```json
-{
-  "image": "vault/Iris_Map.png",
-  "width": 2000,
-  "height": 1400,
-  "markers": [
-    { "name": "Siège I.R.I.S.", "x": 1000, "y": 700, "desc": "...", "icon": "fa-building-shield" }
-  ]
-}
-```
-- Ajoutez votre image de carte dans `vault/` (ou toute autre URL accessible) et référencez-la dans `image`.
-- `width`/`height` doivent correspondre aux dimensions réelles de l'image en pixels.
-- `x`/`y` d'un marqueur sont des coordonnées pixel depuis le coin haut-gauche de l'image.
-- `icon` est un nom d'icône Font Awesome solid (ex. `fa-building-shield`), optionnel.
-- Si l'image est absente ou introuvable, un message de repli s'affiche automatiquement — aucune erreur bloquante.
-
-## Journal de Campagne (`data/journal.json`)
-
-Tableau d'entrées `{ date, title, tags[], content }`, trié par date décroissante à l'affichage. Chaque entrée est un accordéon dépliable dans le hub.
-
-## Bestiaire / Codex (`data/bestiaire.json`)
-
-Tableau d'entrées `{ name, type, danger, description }`. `danger` accepte `Faible`, `Modéré`, `Élevé` ou `Critique` (la couleur du badge s'adapte automatiquement). Cliquer sur une carte ouvre la fiche complète.
+- Les archives déjà chiffrées dans `vault/*.enc` (ancien système) sont **réutilisées telles quelles** : ajoutez-les comme document (chemin `vault/Rapport.pdf.enc` + leur code), donnez-les aux personnages concernés, publiez.
+- Catégorie contenant « Dossier » → tuile **Dossier Perso** ; autres catégories → **Archives**.
+- `vault/agents`, `vault/docs` et `vault/maps` sont gérés par la publication : les fichiers obsolètes (code changé, document retiré) y sont supprimés.
+- Changer un code puis republier rend l'ancien inutilisable. Un joueur ne voit jamais les documents d'un autre, ni les notes MJ, ni les PNJ non publiés.
+- La Google Sheet et `data/carte.json` / `data/bestiaire.json` ne sont plus utilisés par le portail.
 
 ---
 
@@ -95,6 +78,26 @@ Application de jeu en direct, toujours **100 % statique** : le navigateur du MJ 
 
 Un joueur ne reçoit **que** ses propres données (jamais les notes MJ, les messages ou l'inventaire des autres, ni les jets secrets). Les PNJ masqués ou situés sous le brouillard ne sont pas envoyés du tout.
 
+## Confort de jeu (vue MJ)
+
+| | |
+|---|---|
+| **Combat** | Onglet *Combat* : participants (joueurs + PNJ de la carte), initiative d20 (+ statistique choisie), tour en cours, PV en direct, ajout en cours de combat. Les joueurs et le stream voient l'ordre du tour (sans les PNJ masqués). |
+| **PV de zone** | Dégâts ou soins sur plusieurs cibles d'un coup (onglet Combat ou bouton *PV de zone* de la carte). |
+| **Jets de groupe** | Onglet Dés : même compétence pour tous les joueurs connectés (ou tous les vivants), tableau des résultats. |
+| **Jets des joueurs** | Les joueurs cliquent sur leurs statistiques ; selon *Règles & dés* : refusé, direct, ou validé par le MJ (public / secret / refus) depuis la colonne de gauche. |
+| **Tables aléatoires** | *Planifier › Tables aléatoires* (une entrée par ligne, « 3x » = pondération) ; tirage d'un clic dans l'onglet Dés, public ou secret. |
+| **Minuteur / chrono** | Colonne de gauche ; affiché chez les joueurs et sur le stream, alerte à zéro. |
+| **Carte** | Pinceau *Zone +* / *Zone −* (rectangle), notes MJ épinglées et déplaçables (jamais envoyées), *Ping* (ou Alt+clic) visible de tous — les joueurs peuvent pinger aussi. |
+| **Annuler / rétablir** | Ctrl+Z / Ctrl+Y (hors champ de saisie), boutons dans la barre : fiches, carte, brouillard, combat… (pas les messages ni la session en direct). |
+| **Recherche** | Ctrl+K : personnages, PNJ, documents, scènes, cartes, lieux, codex, boutiques, pistes, tables. |
+| **Raccourcis** | 1-9 joueur, R relancer, N / Maj+N tour suivant / précédent, F outil de brouillard, P ping, ? aide. |
+| **Connexions** | Latence et dernier signal de chaque joueur, bouton pour renvoyer la vue complète à un joueur bloqué. |
+| **Bilan de session** | À la fin, le brouillon de rapport commence par un bilan : PV, morts, argent, objets gagnés / perdus, documents obtenus, lieux découverts, scènes jouées. |
+| **Préparation** | Modèles rapides de PNJ + noms aléatoires, duplication de personnages et de fiches PNJ, export / import d'un personnage seul (`.personnage.json`). |
+
+Côté joueur : carnet personnel (sauvegardé dans le .iris, lisible par le MJ), notifications quand un document, un objet ou de l'argent est reçu, effet visuel en cas de blessure, de mort ou de soin.
+
 ## Vue spectateur (stream / OBS)
 
 Écran de diffusion en lecture seule pour un Actual Play : carte et jetons, bandeau du groupe (PV), derniers jets avec la même animation que les joueurs, documents montrés à tous, ambiance sonore.
@@ -125,6 +128,24 @@ Un joueur ne reçoit **que** ses propres données (jamais les notes MJ, les mess
 | Fiches PNJ / créatures | Banque PNJ & créatures |
 
 Réimporter met à jour le codex, les cartes et la banque ; les personnages existants ne sont modifiés que si l'option est cochée (jamais leurs PV en cours, leur argent ni leur inventaire). Les illustrations sont ré-encodées en vignettes WebP (≈ 0,7 Mo pour un projet de 50 pages). Le codex n'est **jamais** envoyé aux joueurs.
+
+## Export vers Amsel Suite (`.lore`)
+
+*Planifier › Codex & lore › Exporter en .lore* : choisissez votre `.lore` actuel, une **copie mise à jour** est téléchargée (`… (DocReader AAAA-MM-JJ).lore`) ; l'original n'est jamais modifié. Les nouvelles pages sont construites à partir des modèles du projet.
+
+| Dans le .iris | Dans la copie .lore |
+|---|---|
+| Personnages | Fiches PJ : PV, blessures, identité, compétences, caractéristiques, lore (la rune « Nom » et les liens vers d'autres pages ne sont pas écrasés) ; nouveaux personnages → nouvelles fiches PJ avec portrait |
+| PNJ & créatures | Fiches PNJ / Créature (description, caractéristiques, notes MJ) |
+| Lieux des cartes | Pages « Lieu » + épingles ; position mise à jour si le lieu a été déplacé ; cartes créées dans l'appli → nouvelles cartes Amsel |
+| Rapports | Pages « Opération » sous le séparateur *Rapports de session* (passages censurés en clair, notés « Réservé à … ») |
+| Scènes | Pages « Quête » sous le séparateur *Scénario* (déroulé, objectifs, liens vers les fiches) |
+
+Chaque élément exporté retient sa page : un nouvel export met à jour les mêmes pages au lieu de les dupliquer — repartez donc de la dernière copie exportée. Restent hors du .lore : codes agents, argent, jets, brouillard, documents chiffrés.
+
+## Archives existantes de `vault/`
+
+*Planifier › Documents › Scanner vault/* liste les `.enc` déposés à la racine de `vault/` (dossier local sous Chrome / Edge, sinon le dépôt GitHub `GITHUB_REPO` de `js/config.js`) et les déclare comme documents : titre et catégorie d'après le nom, destinataire deviné (nom du personnage ou pseudo du joueur). Collez l'URL CSV de l'ancienne Google Sheet pour récupérer les codes : chacun est vérifié par un vrai déchiffrement.
 
 ## Brouillon de rapport automatique
 
@@ -172,9 +193,18 @@ js/player.js        vue joueur
 js/spectator.js     vue spectateur (stream / OBS)
 js/editors.js       fiche personnage, document, boutique, ambiance (partagés MJ & planif)
 js/game.js          règles métier (transferts, achats, jets, vue filtrée par joueur)
-js/report.js        brouillon automatique de rapport
+js/report.js        brouillon automatique de rapport + bilan de session
+js/combat.js        onglet Combat (initiative, tours, PV de zone)
+js/history.js       annuler / rétablir
+js/search.js        recherche globale Ctrl+K
+js/timer.js         minuteur et bandeau de combat (joueur / stream)
+js/names.js         modèles de PNJ et noms aléatoires
 js/lore.js          import Amsel Suite (.lore : tar + data.json) → codex, cartes, PJ, PNJ
 js/codex.js         codex MJ : pages, synopsis, visualiseur de diagrammes
+js/lore-export.js   export .iris → copie .lore (Amsel Suite)
+js/vault-scan.js    scan des archives .enc de vault/ (+ codes de l'ancienne Google Sheet)
+js/publish.js       publication du portail joueurs (paquets agents, documents, cartes, .zip)
+js/portal-data.js   format du portail : code agent, dérivation du fichier, lecture côté index.html
 js/fog.js           brouillard de guerre (grille compacte)
 js/audio.js         lecteur d'ambiance · js/rolloverlay.js animation des jets
 js/filesave.js      enregistrement direct dans le .iris (Chrome / Edge)

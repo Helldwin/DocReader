@@ -44,6 +44,14 @@ export function initials(name) {
     return String(name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
 }
 
+/** Personnage mort : PV à 0 (ou moins) avec un maximum défini. `dead` = drapeau déjà calculé (vue joueur). */
+export const isDead = (c) => !!c && (c.dead === true || (Number(c.hpMax) > 0 && Number(c.hp) <= 0));
+/** Vivants d'abord, morts en bas (ordre d'origine conservé dans chaque groupe). */
+export const aliveFirst = (list) => [...list].sort((a, b) => isDead(a) - isDead(b));
+/** Classe CSS et petit marqueur pour un personnage mort. */
+export const deadCls = (c) => (isDead(c) ? 'is-dead' : '');
+export const deadMark = (c) => (isDead(c) ? ' <i class="fa-solid fa-skull dead-mark" title="Mort"></i>' : '');
+
 /** Avatar : image si dispo, sinon initiales sur la couleur du personnage. */
 export function avatarHtml(c, cls = '') {
     const color = esc(c?.color || '#ffd900');

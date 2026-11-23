@@ -1,8 +1,8 @@
 // Vue "Planifier une session" : configure intégralement la campagne avant (ou entre) les sessions.
 import { store } from './store.js';
 import { registerActions, rerender, tabsHtml } from './ui.js';
-import { esc, avatarHtml, pickFile, readDataUrl, loadImage, toast, download, randomCode, uid, confirmBox, modal } from './util.js';
-import { newCharacter, newJournalEntry, findChar, findMap, findBank, findScene, findDoc, findTrack, findShop, lorePage, newMap, normalizeBankEntry, normalizeScene, DICE_PRESETS, DEFAULT_STATS, serialize, filename } from './iris-file.js';
+import { esc, avatarHtml, aliveFirst, deadCls, deadMark, pickFile, readDataUrl, loadImage, toast, download, randomCode, uid, confirmBox, modal } from './util.js';
+import { newCharacter, newJournalEntry, newDocument, findChar, findMap, findBank, findScene, findDoc, findTrack, findShop, lorePage, newMap, normalizeBankEntry, normalizeScene, DICE_PRESETS, DEFAULT_STATS, serialize, filename } from './iris-file.js';
 import { discordConfigured, currentDiscordUser } from './auth.js';
 import { charEditorHtml, docEditorHtml, shopEditorHtml, ambienceHtml, bankEditorHtml } from './editors.js';
 import { draftReport, reportRange } from './report.js';
@@ -10,7 +10,16 @@ import { writeIris, handleName, fsSupported } from './filesave.js';
 import { publishJournal, importPublished, fetchJournal, parseMarkup } from './journal.js';
 import { LiveMap } from './map.js';
 import { CONFIG } from './config.js';
+import { undo, redo } from './history.js';
+import { openSearch, setSearchOpener } from './search.js';
+import { importCharacter } from './editors.js';
+import { normalizeTable, findTable } from './iris-file.js';
+import { tableEntries } from './game.js';
 import { readLoreFile, loreSummary, applyLore } from './lore.js';
+import { listVault, fetchLegacySheet, guessFromName, testCode, sheetMatch } from './vault-scan.js';
+import { exportLore } from './lore-export.js';
+import { buildPortal, portalChecks, docsOf, isDossier, dirSupported, repoDir, looksLikeRepo, writeToRepo, makeZip, MANAGED_DIRS } from './publish.js';
+import { randomAgentCode, fmtCode } from './portal-data.js';
 import { mountCodex, unmountCodex, showCodexPage } from './codex.js';
 
 const SECTIONS = [
@@ -19,11 +28,13 @@ const SECTIONS = [
     { id: 'chars', label: 'Personnages', icon: 'fa-users' },
     { id: 'bank', label: 'PNJ & créatures', icon: 'fa-skull' },
     { id: 'scenes', label: 'Scénario', icon: 'fa-clapperboard' },
+    { id: 'tables', label: 'Tables aléatoires', icon: 'fa-table-list' },
     { id: 'docs', label: 'Documents', icon: 'fa-folder-open' },
     { id: 'map', label: 'Cartes', icon: 'fa-map' },
     { id: 'shops', label: 'Boutiques', icon: 'fa-store' },
     { id: 'ambience', label: 'Ambiance', icon: 'fa-music' },
     { id: 'codex', label: 'Codex & lore', icon: 'fa-book-skull' },
+    { id: 'portal', label: 'Portail joueurs', icon: 'fa-globe' },
     { id: 'journal', label: 'Rapports', icon: 'fa-scroll' },
 ];
 
@@ -44,6 +55,9 @@ export function mountPlanner(el, { onHost, onExit }) {
                 <div><b>Planifier une session</b><small id="pl-title"></small></div></div>
             <span class="grow"></span>
             <span id="pl-dirty" class="pill"></span>
+            <button class="icon-btn" data-act="pl.search" title="Rechercher (Ctrl+K)"><i class="fa-solid fa-magnifying-glass"></i></button>
+            <button class="icon-btn" data-act="pl.undo" title="Annuler (Ctrl+Z)"><i class="fa-solid fa-rotate-left"></i></button>
+            <button class="icon-btn" data-act="pl.redo" title="Rétablir (Ctrl+Y)"><i class="fa-solid fa-rotate-right"></i></button>
             <button class="btn ghost" data-act="pl.export"><i class="fa-solid fa-floppy-disk"></i> Enregistrer le .iris</button>
             <button class="icon-btn" data-act="pl.exportCopy" title="Télécharger une copie du .iris"><i class="fa-solid fa-download"></i></button>
             <button class="btn" data-act="pl.host"><i class="fa-solid fa-tower-broadcast"></i> Lancer la session</button>
@@ -55,7 +69,22 @@ export function mountPlanner(el, { onHost, onExit }) {
         </div>
     </div>`;
     unsub = store.on(onStore);
+    setSearchOpener(openFromSearch);
     renderAll();
+}
+
+/** Ouverture d'un résultat de recherche (Ctrl+K) dans Planifier. */
+function openFromSearch(it) {
+    const goto = (section) => { ui.section = section; renderAll(); };
+    if (it.kind === 'char') { ui.charId = it.id; goto('chars'); }
+    else if (it.kind === 'bank') { ui.bankId = it.id; goto('bank'); }
+    else if (it.kind === 'scene') { ui.sceneId = it.id; goto('scenes'); }
+    else if (it.kind === 'table') { ui.tableId = it.id; goto('tables'); }
+    else if (it.kind === 'map' || it.kind === 'marker') { ui.mapId = it.mapId || it.id; goto('map'); }
+    else if (it.kind === 'doc') { goto('docs'); setTimeout(() => root.querySelector(`[data-bind="doc:${CSS.escape(it.id)}|title"]`)?.closest('.card')?.scrollIntoView({ block: 'start' }), 50); }
+    else if (it.kind === 'shop') goto('shops');
+    else if (it.kind === 'track') goto('ambience');
+    else if (it.kind === 'lore') { showCodexPage(it.id); goto('codex'); }
 }
 
 export function unmountPlanner() {
@@ -64,12 +93,16 @@ export function unmountPlanner() {
     previewMap = null;
     unmountCodex();
     ui.cxLore = undefined;
+    setSearchOpener(null);
 }
 
 function onStore(evt) {
     if (!root?.isConnected) return;
     renderHeader();
+    if (evt.selectChar) ui.charId = evt.selectChar;
+    if (evt.selectBank) ui.bankId = evt.selectBank;
     if (evt.type === 'structure' || evt.type === 'load') renderMain();
+    else if (evt.scope?.startsWith('table:') && evt.path === 'name') renderTableList();
     else if (evt.scope?.startsWith('char:') && evt.path === 'name') renderCharList();
     else if (evt.scope?.startsWith('journal:') && ['title', 'date'].includes(evt.path)) renderJournalList();
     else if (evt.scope?.startsWith('bank:') && ['name', 'kind'].includes(evt.path)) renderBankList();
@@ -99,7 +132,7 @@ function renderMain() {
     if (ui.section !== 'codex') { unmountCodex(); ui.cxLore = undefined; }
     // Codex : on ne redessine que si le lore a changé (le zoom du diagramme est conservé).
     else if (ui.cxLore === store.state.lore && main.querySelector('#cx-root')) return;
-    const fn = { campaign: campaignHtml, rules: rulesHtml, chars: charsHtml, bank: bankHtml, scenes: scenesHtml, docs: docsHtml, map: mapHtml, shops: shopsHtml, ambience: ambHtml, codex: codexHtml, journal: journalHtml }[ui.section];
+    const fn = { campaign: campaignHtml, rules: rulesHtml, chars: charsHtml, bank: bankHtml, scenes: scenesHtml, tables: tablesHtml, docs: docsHtml, map: mapHtml, shops: shopsHtml, ambience: ambHtml, codex: codexHtml, portal: portalHtml, journal: journalHtml }[ui.section];
     rerender(main, fn());
     if (ui.section === 'map') refreshMapPreview();
     if (ui.section === 'codex') { ui.cxLore = store.state.lore; mountCodex(main.querySelector('#cx-root'), { force: true }); }
@@ -175,6 +208,15 @@ function rulesHtml() {
             <input data-bind="rules|fieldPresets" data-kind="tags" value="${esc(s.rules.fieldPresets.join(', '))}" placeholder="Titre, Âge, Profession, Force, Dextérité…"></label>
         <p class="muted small">Ajoutés automatiquement aux nouveaux personnages ; bouton « Champs de la campagne » sur les fiches existantes.</p>
     </section>
+    <section class="card grid2">
+        <label>Les joueurs lancent leurs dés depuis leur fiche
+            <select data-bind="rules|playerRolls">
+                <option value="validate" ${s.rules.playerRolls === 'validate' ? 'selected' : ''}>Oui, après validation du MJ (public ou secret)</option>
+                <option value="auto" ${s.rules.playerRolls === 'auto' ? 'selected' : ''}>Oui, directement (résultat public)</option>
+                <option value="off" ${s.rules.playerRolls === 'off' ? 'selected' : ''}>Non, seul le MJ lance</option>
+            </select></label>
+        <p class="muted small">En mode validation, chaque demande apparaît dans la colonne de gauche de la vue MJ : lancer en public, en secret, ou refuser.</p>
+    </section>
     <section class="card">
         <h4>Système de dés</h4>
         <div class="row wrap">
@@ -206,14 +248,15 @@ function charsHtml() {
     return `<h2>Personnages</h2>
     <div class="split">
         <div class="split-list"><div id="pl-charlist">${charListHtml()}</div>
-            <button class="btn full mt" data-act="pl.addChar"><i class="fa-solid fa-user-plus"></i> Ajouter un personnage</button></div>
+            <button class="btn full mt" data-act="pl.addChar"><i class="fa-solid fa-user-plus"></i> Ajouter un personnage</button>
+            <button class="btn ghost full mt" data-act="pl.importChar" title="Personnage exporté depuis une autre campagne (.json)"><i class="fa-solid fa-file-import"></i> Importer un personnage</button></div>
         <div class="split-detail">${c ? charEditorHtml(s, c) : '<p class="muted pad">Créez votre premier personnage.</p>'}</div>
     </div>`;
 }
 
 function charListHtml() {
-    return store.state.characters.map((c) => `<button class="list-item ${c.id === ui.charId ? 'active' : ''}" data-act="pl.pickChar" data-id="${c.id}">
-        ${avatarHtml(c)}<span><b>${esc(c.name)}</b><small>${esc(c.player || '—')}</small></span></button>`).join('');
+    return aliveFirst(store.state.characters).map((c) => `<button class="list-item ${c.id === ui.charId ? 'active' : ''} ${deadCls(c)}" data-act="pl.pickChar" data-id="${c.id}">
+        ${avatarHtml(c)}<span><b>${esc(c.name)}${deadMark(c)}</b><small>${esc(c.player || '—')}</small></span></button>`).join('');
 }
 function renderCharList() {
     const el = root.querySelector('#pl-charlist');
@@ -229,6 +272,7 @@ function docsHtml() {
     <div class="row wrap mb">
         <button class="btn" data-act="doc.add"><i class="fa-solid fa-plus"></i> Nouveau document</button>
         <button class="btn ghost" data-act="tool.encrypt"><i class="fa-solid fa-lock"></i> Chiffrer un PDF pour vault/</button>
+        <button class="btn ghost" data-act="pl.vaultScan" title="Déclare dans le .iris les archives .enc déjà présentes dans vault/"><i class="fa-solid fa-magnifying-glass"></i> Scanner vault/</button>
     </div>
     <datalist id="doc-categories">${cats.map((c) => `<option value="${esc(c)}">`).join('')}</datalist>
     ${s.documents.map((d) => docEditorHtml(s, d)).join('') || '<p class="muted">Aucun document.</p>'}`;
@@ -289,6 +333,7 @@ function mapHtml() {
         <label>Nom de la carte<input data-bind="${M}|name" value="${esc(m.name)}"></label>
         <div class="row wrap span2">${active ? '<span class="pill ok"><i class="fa-solid fa-star"></i> Carte active (vue par les joueurs)</span>'
         : `<button class="btn ghost sm" data-act="pl.activeMap" data-id="${m.id}"><i class="fa-solid fa-star"></i> Définir comme carte active</button>`}
+            <label class="check" title="Publiée (brouillard appliqué) dans le portail : consultable avec le code joueur, même sans session"><input type="checkbox" data-bind="${M}|portal" ${m.portal ? 'checked' : ''}> <i class="fa-solid fa-globe"></i> Portail</label>
             <span class="grow"></span>
             <button class="btn ghost sm" data-act="pl.dupMap" data-id="${m.id}" title="Copie (image + lieux, sans jetons)"><i class="fa-solid fa-clone"></i> Dupliquer</button>
             ${s.maps.length > 1 ? `<button class="btn bad sm" data-act="pl.delMap" data-id="${m.id}"><i class="fa-solid fa-trash"></i> Supprimer</button>` : ''}</div>
@@ -424,6 +469,108 @@ function sceneEditorHtml(s, sc) {
     </div>`;
 }
 
+// ---------------------------------------------------------------- Tables aléatoires
+function tablesHtml() {
+    const s = store.state;
+    if (!findTable(s, ui.tableId)) ui.tableId = s.tables[0]?.id || null;
+    const t = findTable(s, ui.tableId);
+    const entries = t ? tableEntries(t) : [];
+    const total = entries.reduce((a, e) => a + e.weight, 0);
+    return `<h2>Tables aléatoires</h2>
+    <p class="muted">Rencontres, butin, rumeurs, météo, noms… En session, onglet <b>Dés</b> de la vue MJ : un clic tire une entrée (pondérée), visible des joueurs ou secrète.</p>
+    <div class="split">
+        <div class="split-list"><div id="pl-tablelist">${tableListHtml()}</div>
+            <button class="btn full mt" data-act="pl.addTable"><i class="fa-solid fa-plus"></i> Nouvelle table</button>
+            <button class="btn ghost full mt" data-act="pl.tableExamples"><i class="fa-solid fa-wand-magic-sparkles"></i> Ajouter des exemples</button></div>
+        <div class="split-detail">${t ? `<section class="card grid2">
+            <label>Nom<input data-bind="table:${t.id}|name" value="${esc(t.name)}"></label>
+            <label class="check"><input type="checkbox" data-bind="table:${t.id}|public" ${t.public ? 'checked' : ''}> Résultat visible des joueurs</label>
+            <label class="span2">Entrées <small class="muted">(une par ligne — « 3x texte » = 3 fois plus probable)</small><textarea rows="14" data-bind="table:${t.id}|entries" data-structure="1">${esc(t.entries)}</textarea></label>
+            <p class="span2 muted small">${entries.length} entrée(s) · tirage sur ${total}</p>
+            <div class="span2 row end"><button class="btn ghost" data-act="pl.testTable" data-id="${t.id}"><i class="fa-solid fa-dice"></i> Tirage d'essai</button>
+                <button class="btn bad" data-act="pl.delTable" data-id="${t.id}"><i class="fa-solid fa-trash"></i> Supprimer</button></div>
+        </section>` : '<p class="muted pad">Aucune table.</p>'}</div>
+    </div>`;
+}
+function tableListHtml() {
+    return store.state.tables.map((t) => `<button class="list-item ${t.id === ui.tableId ? 'active' : ''}" data-act="pl.pickTable" data-id="${t.id}">
+        <i class="fa-solid fa-table-list"></i><span><b>${esc(t.name)}</b><small>${tableEntries(t).length} entrée(s)${t.public ? ' · publique' : ''}</small></span></button>`).join('') || '<p class="muted small">—</p>';
+}
+function renderTableList() {
+    const el = root.querySelector('#pl-tablelist');
+    if (el) el.innerHTML = tableListHtml();
+}
+
+const TABLE_EXAMPLES = [
+    { name: 'Rencontre — forêt de Dimwood', entries: ['3x Rien, seulement le vent dans les branches', '2x Un animal parlant, méfiant', '2x Des traces de pas fraîches qui tournent en rond', 'Une patrouille d\'agents I.R.I.S.', 'Une silhouette sans visage entre les arbres', 'Un objet du passé à moitié enterré'].join('\n') },
+    { name: 'Butin — fouille rapide', entries: ['4x Rien d\'utile', '3x Quelques pièces', '2x Une lampe torche (pile faible)', '2x Une trousse de soins entamée', 'Une clé sans serrure', 'Une lettre jamais envoyée'].join('\n') },
+    { name: 'Rumeur au village', entries: ['Le phare s\'allume certaines nuits sans gardien', 'Des hommes en costume ont posé des questions sur Chloé', 'Le vieux Mathurin parle aux corbeaux', 'On a vu deux lunes au-dessus de la falaise', 'Un enfant est revenu de la forêt sans ombre'].join('\n') },
+];
+
+// ---------------------------------------------------------------- Portail joueurs
+function portalHtml() {
+    const s = store.state;
+    const issues = portalChecks(s);
+    const rows = s.characters.map((c) => {
+        const docs = docsOf(s, c);
+        const dossier = docs.filter(isDossier).length;
+        return `<tr>
+            <td>${avatarHtml(c)}</td>
+            <td><b>${esc(c.name)}</b><br><small class="muted">${esc(c.player || '—')}</small></td>
+            <td><input class="mono code-agent" data-bind="char:${c.id}|portalCode" value="${esc(c.portalCode)}" spellcheck="false" autocomplete="off"></td>
+            <td class="w-act"><button class="icon-btn" data-act="pl.copyCode" data-id="${c.id}" title="Copier le code"><i class="fa-regular fa-copy"></i></button></td>
+            <td class="w-act"><button class="icon-btn" data-act="pl.newAgentCode" data-id="${c.id}" title="Nouveau code (l'ancien ne fonctionnera plus après publication)"><i class="fa-solid fa-rotate"></i></button></td>
+            <td class="small muted">${docs.length - dossier} archive(s) · ${dossier} dossier</td></tr>`;
+    }).join('');
+    const maps = s.maps.filter((m) => m.image).map((m) => `<button class="chip ${m.portal ? 'on' : ''}" data-act="pl.togglePortalMap" data-id="${m.id}">${m.fog.enabled ? '<i class="fa-solid fa-smog" title="Brouillard appliqué"></i> ' : ''}${esc(m.name)}</button>`).join('');
+    const beasts = s.bestiary.map((b) => `<button class="chip ${b.known ? 'on' : ''}" data-act="pl.toggleKnown" data-id="${b.id}">${esc(b.name)}</button>`).join('');
+    const shared = s.documents.filter((d) => s.characters.some((c) => docsOf(s, c).includes(d)));
+    const toEncrypt = shared.filter((d) => d.src && !/\.enc(\?|$)/i.test(d.src) && !/^https?:/i.test(d.src)).length;
+    const last = s.portal.publishedAt ? new Date(s.portal.publishedAt).toLocaleString('fr-FR') : 'jamais';
+    return `<h2>Portail joueurs</h2>
+    <p class="muted">Chaque joueur a un <b>code unique</b>. Saisi sur le portail (<code>index.html</code>), il ouvre <b>tout ce qui le concerne, même sans session</b> :
+        archives et dossier perso (documents qui lui sont donnés), cartes publiées, journal avec ses passages censurés déclassifiés, bestiaire connu.
+        Tout est chiffré : sans code, le dépôt ne contient que des fichiers illisibles, et rien n'indique quel fichier appartient à qui.</p>
+    <section class="card">
+        <h4><i class="fa-solid fa-id-badge"></i> Codes joueurs</h4>
+        <table class="table"><thead><tr><th></th><th>Personnage</th><th>Code d'accès</th><th></th><th></th><th>Documents</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="muted">Aucun personnage.</td></tr>'}</tbody></table>
+        <p class="muted small mt">Vous pouvez remplacer un code par celui que le joueur connaît déjà (8 caractères minimum, lettres et chiffres ; tirets et espaces ignorés). Un code changé n'est effectif qu'après publication.</p>
+    </section>
+    <section class="card grid2">
+        <div><span class="lbl">Cartes publiées</span><div class="chips mt">${maps || '<span class="muted small">Aucune carte avec image.</span>'}</div>
+            <p class="muted small">Le brouillard de guerre est appliqué à l'image publiée ; les lieux encore cachés ne sont pas publiés.</p></div>
+        <div><span class="lbl">Bestiaire connu des joueurs</span><div class="chips mt">${beasts || '<span class="muted small">Banque PNJ & créatures vide.</span>'}</div>
+            <p class="muted small">Nom, type, niveau de danger, description et portrait (jamais les notes MJ ni les caractéristiques).</p></div>
+    </section>
+    <section class="card">
+        <h4><i class="fa-solid fa-folder-tree"></i> Documents</h4>
+        <p>${shared.length} document(s) distribué(s), dont ${toEncrypt} seront chiffrés vers <code>vault/docs/</code> ; les <code>.enc</code> déjà dans <code>vault/</code> sont réutilisés avec leur code.
+            Catégorie contenant « Dossier » → onglet <b>Dossier Perso</b> ; les autres catégories → <b>Archives</b>.</p>
+    </section>
+    ${issues.length ? `<div class="notice warn"><b>À corriger :</b><ul class="mt">${issues.map((i) => `<li>${esc(i)}</li>`).join('')}</ul></div>` : ''}
+    <section class="card">
+        <h4><i class="fa-solid fa-cloud-arrow-up"></i> Publication</h4>
+        <p class="muted small">Dernière publication : ${esc(last)}. Écrit <code>data/portal.json</code>, <code>data/journal.json</code> et les dossiers <code>${MANAGED_DIRS.join('/</code>, <code>')}/</code> (gérés par l'appli : les fichiers obsolètes y sont supprimés). Ensuite : <code>git add . && git commit && git push</code>.</p>
+        <div class="row wrap mt">
+            ${dirSupported ? `<button class="btn" data-act="pl.portalPublish"><i class="fa-solid fa-folder-open"></i> Publier dans le dossier du dépôt</button>
+                <button class="btn ghost sm" data-act="pl.portalPublish" data-change="1">Choisir un autre dossier</button>` : ''}
+            <button class="btn ${dirSupported ? 'ghost' : ''}" data-act="pl.portalZip"><i class="fa-solid fa-file-zipper"></i> Télécharger le .zip</button>
+            <span id="pl-portal-progress" class="muted small"></span>
+        </div>
+        ${dirSupported ? '' : '<p class="muted small mt">Extrayez le .zip à la racine du dépôt (en remplaçant les fichiers), puis poussez. Chrome / Edge peuvent écrire directement dans le dossier.</p>'}
+    </section>`;
+}
+
+const portalProgress = (t) => { const el = root?.querySelector('#pl-portal-progress'); if (el) el.textContent = t; };
+
+function portalDone(res, extra = '') {
+    const s = store.state;
+    s.portal.publishedAt = Date.now();
+    store.commit('structure');
+    res.warnings.forEach((w) => toast(w, 'warn', 9000));
+    toast(`Portail publié : ${res.counts.agents} joueur(s), ${res.counts.docs} document(s), ${res.counts.maps} carte(s), ${res.counts.bestiary} entité(s)${extra}. Poussez le dépôt (git push) pour le mettre en ligne.`, 'ok', 10000);
+}
+
 // ---------------------------------------------------------------- Codex & lore
 function codexHtml() {
     const lore = store.state.lore;
@@ -431,6 +578,7 @@ function codexHtml() {
     return `<h2>Codex & lore</h2>
     <div class="row wrap mb">
         <button class="btn" data-act="pl.loreImport"><i class="fa-solid fa-file-import"></i> ${lore ? 'Réimporter / mettre à jour' : 'Importer un .lore'} <small>(Amsel Suite)</small></button>
+        <button class="btn ghost" data-act="pl.loreExport" title="Choisissez votre .lore actuel : une copie mise à jour est téléchargée, l'original n'est pas modifié"><i class="fa-solid fa-file-export"></i> Exporter en .lore</button>
         ${lore ? `<span class="muted small grow">« ${esc(lore.source)} » · importé le ${new Date(lore.importedAt).toLocaleDateString('fr-FR')} · ${lore.pages.length} pages · ${lore.diagrams.length} diagramme(s) · ≈ ${size} Mo dans le .iris</span>
             <button class="btn bad sm" data-act="pl.loreRemove"><i class="fa-solid fa-trash"></i> Retirer le codex</button>` : ''}
     </div>
@@ -554,8 +702,50 @@ registerActions({
     },
 
     'pl.pickChar': (el) => { ui.charId = el.dataset.id; renderMain(); },
+    'pl.search': () => openSearch(),
+    'pl.undo': () => undo(),
+    'pl.redo': () => redo(),
+    'pl.importChar': async () => {
+        const f = await pickFile('.json,application/json');
+        if (!f) return;
+        let data;
+        try { data = JSON.parse(await f.text()); } catch { throw new Error('Fichier illisible.'); }
+        const c = importCharacter(store.state, data);
+        ui.charId = c.id;
+        store.commit('structure');
+        toast(`« ${c.name} » importé (statistiques rapprochées par nom, nouveau code joueur).`, 'ok', 6000);
+    },
+    'pl.addTable': () => {
+        const t = normalizeTable({ name: `Table ${store.state.tables.length + 1}` });
+        store.state.tables.push(t);
+        ui.tableId = t.id;
+        store.commit('structure');
+    },
+    'pl.tableExamples': () => {
+        const s = store.state;
+        for (const ex of TABLE_EXAMPLES) if (!s.tables.some((t) => t.name === ex.name)) s.tables.push(normalizeTable(ex));
+        ui.tableId = s.tables[s.tables.length - 1]?.id;
+        store.commit('structure');
+    },
+    'pl.pickTable': (el) => { ui.tableId = el.dataset.id; renderMain(); },
+    'pl.delTable': async (el) => {
+        const s = store.state;
+        const t = findTable(s, el.dataset.id);
+        if (!t || !(await confirmBox(`Supprimer la table « ${t.name} » ?`, 'Supprimer'))) return;
+        s.tables = s.tables.filter((x) => x !== t);
+        store.commit('structure');
+    },
+    'pl.testTable': (el) => {
+        const t = findTable(store.state, el.dataset.id);
+        const e = t ? tableEntries(t) : [];
+        if (!e.length) throw new Error('Table vide.');
+        const total = e.reduce((a, x) => a + x.weight, 0);
+        let r = Math.floor(Math.random() * total) + 1;
+        const hit = e.find((x) => (r -= x.weight) <= 0);
+        toast(`Essai : ${hit.text}`, 'info', 5000);
+    },
     'pl.addChar': () => {
-        const c = newCharacter(store.state, `Agent ${store.state.characters.length + 1}`);
+        const c = newCharacter(store.state, `Personnage ${store.state.characters.length + 1}`);
         store.state.characters.push(c);
         ui.charId = c.id;
         store.commit('structure');
@@ -627,7 +817,7 @@ registerActions({
         const s = store.state;
         const src = findScene(s, el.dataset.id);
         if (!src) return;
-        const sc = normalizeScene({ ...src, id: null, title: `${src.title} (copie)`, done: false });
+        const sc = normalizeScene({ ...src, id: null, loreId: '', title: `${src.title} (copie)`, done: false });
         s.scenes.splice(s.scenes.indexOf(src) + 1, 0, sc);
         ui.sceneId = sc.id;
         store.commit('structure');
@@ -666,6 +856,120 @@ registerActions({
             throw e;
         }
     },
+    'pl.copyCode': async (el) => {
+        const c = findChar(store.state, el.dataset.id);
+        if (!c) return;
+        const code = fmtCode(c.portalCode);
+        try { await navigator.clipboard.writeText(code); toast(`Code de ${c.name} copié : ${code}`, 'ok'); } catch { toast(`${c.name} : ${code}`, 'info', 8000); }
+    },
+    'pl.newAgentCode': async (el) => {
+        const c = findChar(store.state, el.dataset.id);
+        if (!c || !(await confirmBox(`Générer un nouveau code pour ${c.name} ? Après publication, l'ancien code ne donnera plus accès à rien.`, 'Générer'))) return;
+        c.portalCode = randomAgentCode();
+        store.commit('structure');
+    },
+    'pl.togglePortalMap': (el) => { const m = findMap(store.state, el.dataset.id); if (m) { m.portal = !m.portal; store.commit('structure'); } },
+    'pl.toggleKnown': (el) => { const b = findBank(store.state, el.dataset.id); if (b) { b.known = !b.known; store.commit('structure'); } },
+    'pl.portalPublish': async (el) => {
+        const dir = await repoDir({ ask: true, change: !!el.dataset.change });
+        if (!dir) return;
+        if (!(await looksLikeRepo(dir)) && !(await confirmBox(`Le dossier « ${dir.name} » ne contient pas session.html : est-ce bien la racine du dépôt du site ?`, 'Publier quand même'))) return;
+        el.disabled = true;
+        try {
+            const res = await buildPortal(store.state, portalProgress);
+            const { removed } = await writeToRepo(dir, res.files, portalProgress);
+            portalProgress(`${res.files.size} fichier(s) écrit(s) dans « ${dir.name} »${removed ? `, ${removed} obsolète(s) supprimé(s)` : ''}.`);
+            portalDone(res, ` → « ${dir.name} »`);
+        } finally { el.disabled = false; }
+    },
+    'pl.portalZip': async (el) => {
+        el.disabled = true;
+        try {
+            const res = await buildPortal(store.state, portalProgress);
+            download('portail-iris.zip', makeZip(res.files));
+            portalProgress(`${res.files.size} fichier(s) dans portail-iris.zip — à extraire à la racine du dépôt (videz d'abord ${MANAGED_DIRS.join(', ')}).`);
+            portalDone(res);
+        } finally { el.disabled = false; }
+    },
+
+    'pl.loreExport': async () => {
+        const f = await pickFile('.lore,.lorekit,.tar');
+        if (!f) return;
+        toast('Lecture du .lore d\'origine…', 'info', 1500);
+        const src = await readLoreFile(f);
+        const { blob, report } = await exportLore(store.state, src);
+        const d = new Date();
+        const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        download(`${f.name.replace(/\.[^.]+$/, '')} (DocReader ${stamp}).lore`, blob);
+        store.commit('structure');
+        toast(`Copie .lore téléchargée : ${report.created} page(s) créée(s), ${report.updated} mise(s) à jour, ${report.pins} épingle(s), ${report.maps} carte(s), ${report.images} image(s). Ouvrez-la dans Amsel Suite pour vérifier ; votre .lore d'origine n'a pas été modifié.`, 'ok', 12000);
+    },
+
+    'pl.vaultScan': async () => {
+        const s = store.state;
+        toast('Recherche des archives dans vault/…', 'info', 1500);
+        const { names, source } = await listVault();
+        const known = new Map(s.documents.map((d) => [decodeURIComponent(String(d.src).replace(/^\.?\/?vault\//, '')), d]));
+        const rows = names.map((n) => ({ name: n, doc: known.get(n), ...guessFromName(n, s.characters) }));
+        const charName = (id) => s.characters.find((c) => c.id === id)?.name || '';
+        const body = `<form class="stack" data-submit="pl.vaultAdd">
+            <p class="muted small">${names.length} archive(s) trouvée(s) — ${esc(source)}.</p>
+            <table class="table"><thead><tr><th></th><th>Fichier</th><th>Catégorie</th><th>Donné à</th></tr></thead><tbody>
+            ${rows.map((r, i) => `<tr><td><input type="checkbox" name="f${i}" ${r.doc ? 'disabled' : 'checked'}></td>
+                <td>${esc(r.name)}${r.doc ? ' <small class="ok">déjà déclaré</small>' : ''}</td><td>${esc(r.doc?.category || r.category)}</td>
+                <td class="small">${esc((r.doc ? s.characters.filter((c) => c.docs.includes(r.doc.id)).map((c) => c.id) : r.owners).map(charName).join(', ') || '—')}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Aucun fichier .enc à la racine de vault/.</td></tr>'}
+            </tbody></table>
+            <label>Ancienne Google Sheet publiée en CSV <small class="muted">(facultatif : récupère les codes — colonnes type, code, url)</small>
+                <input name="sheet" value="${esc(s.gm.legacySheetUrl)}" placeholder="https://docs.google.com/spreadsheets/d/e/…/pub?output=csv"></label>
+            <p class="muted small">Sans feuille, renseignez le code de chaque archive dans sa fiche (Documents) : il est vérifié par un vrai déchiffrement. Les destinataires sont devinés d'après le nom du fichier (nom du personnage ou pseudo du joueur) — à ajuster ensuite.</p>
+            <p id="vault-progress" class="muted small"></p>
+            <div class="row end"><button type="button" class="btn ghost" data-close>Fermer</button><button class="btn"><i class="fa-solid fa-plus"></i> Ajouter / vérifier les codes</button></div>
+        </form>`;
+        const m = modal('Archives de vault/', body, { wide: false });
+        m.el._rows = rows;
+        m.el._close = m.close;
+    },
+    'pl.vaultAdd': async (form) => {
+        const s = store.state;
+        const wrap = form.closest('.modal-backdrop');
+        const rows = wrap._rows;
+        const progress = form.querySelector('#vault-progress');
+        const btn = form.querySelector('button:not([type])');
+        btn.disabled = true;
+        try {
+            const sheetUrl = form.sheet.value.trim();
+            let sheet = [];
+            if (sheetUrl) {
+                progress.textContent = 'Lecture de la feuille…';
+                sheet = await fetchLegacySheet(sheetUrl);
+                s.gm.legacySheetUrl = sheetUrl;
+            }
+            let added = 0, verified = 0, bad = [];
+            for (const [i, r] of rows.entries()) {
+                let d = r.doc;
+                if (!d) {
+                    if (!form[`f${i}`]?.checked) continue;
+                    d = newDocument();
+                    Object.assign(d, { title: r.title, category: r.category, src: `vault/${r.name}` });
+                    s.documents.push(d);
+                    for (const id of r.owners) { const c = findChar(s, id); if (c && !c.docs.includes(d.id)) c.docs.push(d.id); }
+                    added++;
+                }
+                const row = sheetMatch(sheet, r.name);
+                if (row && /dossier/i.test(row.type)) d.category = 'Dossier';
+                const candidate = row?.code || d.code;
+                if (!candidate) continue;
+                progress.textContent = `Vérification du code : ${r.name}…`;
+                if (await testCode(d.src, candidate)) { d.code = candidate; verified++; } else bad.push(r.name);
+            }
+            store.commit('structure');
+            wrap._close();
+            toast(`${added} archive(s) ajoutée(s), ${verified} code(s) vérifié(s).${bad.length ? ` Code invalide ou fichier non publié : ${bad.join(', ')}.` : ''}`, bad.length ? 'warn' : 'ok', 10000);
+            const missing = s.documents.filter((d) => /^vault\/[^/]+\.enc$/i.test(d.src) && !d.code).length;
+            if (missing) toast(`${missing} archive(s) sans code : renseignez-le dans Documents (champ « Code de déchiffrement »).`, 'warn', 10000);
+        } finally { btn.disabled = false; }
+    },
+
     'pl.loreRemove': async () => {
         if (!(await confirmBox('Retirer le codex (pages, diagrammes, illustrations) du .iris ? Les personnages, cartes et PNJ importés sont conservés.', 'Retirer'))) return;
         store.state.lore = null;

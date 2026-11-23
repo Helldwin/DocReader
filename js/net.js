@@ -68,6 +68,7 @@ export class Host {
             const c = this.clients.get(conn._clientId);
             if (c) c.lastSeen = Date.now();
             if (msg.t === 'ping') { this._raw(conn, { t: 'pong' }); return; }
+            if (msg.t === 'hpong') { if (c) c.rtt = Math.max(0, Date.now() - Number(msg.ts)); return; }
             this.h.onMessage?.(conn._clientId, msg);
         });
         const gone = () => {
@@ -83,6 +84,7 @@ export class Host {
 
     _sweep() {
         const now = Date.now();
+        for (const c of this.clients.values()) this._raw(c.conn, { t: 'hping', ts: now }); // mesure de latence
         for (const [id, c] of this.clients) {
             if (now - c.lastSeen > TIMEOUT_MS) {
                 try { c.conn.close(); } catch { /* ignore */ }
@@ -154,6 +156,7 @@ export class Client {
         conn.on('data', (msg) => {
             this.lastSeen = Date.now();
             if (msg?.t === 'pong') return;
+            if (msg?.t === 'hping') { try { conn.send({ t: 'hpong', ts: msg.ts }); } catch { /* ignore */ } return; }
             this.h.onMessage?.(msg);
         });
         const lost = () => {

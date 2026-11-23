@@ -1,16 +1,20 @@
 // Vue MJ en direct : héberge la session, voit et modifie tout, lance les dés, gère la carte,
 // les documents, l'économie et les conversations privées.
 import { store } from './store.js';
-import { registerActions, rerender, tabsHtml } from './ui.js';
-import { esc, avatarHtml, hpBar, fmtTime, toast, beep, confirmBox, modal, toInt, muted, setMuted } from './util.js';
+import { registerActions, rerender, tabsHtml, runAction } from './ui.js';
+import { esc, avatarHtml, hpBar, fmtTime, toast, beep, confirmBox, modal, toInt, muted, setMuted, aliveFirst, deadCls, deadMark, uid } from './util.js';
 import { findChar, findDoc, findMap, findBank, findTrack, findShop, lorePage, docKind, newDocument, normalizeNpc } from './iris-file.js';
 import { Host } from './net.js';
-import { viewFor, makeRoll, addChat, transferItem, transferMoney, buyItem, canGetAsset, assetData, logEvent, launchScene, spawnFromBank } from './game.js';
+import { viewFor, makeRoll, addChat, transferItem, transferMoney, buyItem, canGetAsset, assetData, logEvent, launchScene, spawnFromBank,
+    groupRoll, drawTable, addPing, timerStart, timerPause, timerReset, timerValue, fmtClock, sessionSnapshot, nextTurn } from './game.js';
+import { combatPanelHtml, hpAreaHtml } from './combat.js';
+import { undo, redo } from './history.js';
+import { openSearch, setSearchOpener } from './search.js';
 import { mountCodex, unmountCodex, showCodexPage } from './codex.js';
 import { OUTCOME_LABEL, describeRoll } from './dice.js';
 import { charEditorHtml, docEditorHtml, kindIcon, shopEditorHtml, ambienceHtml } from './editors.js';
 import { LiveMap } from './map.js';
-import { paintFog, fillFog } from './fog.js';
+import { paintFog, paintRect, fillFog } from './fog.js';
 import { AmbiencePlayer } from './audio.js';
 import { exportIris } from './planner.js';
 import { draftReport } from './report.js';
@@ -20,6 +24,7 @@ const TABS = [
     { id: 'sheet', label: 'Fiche', icon: 'fa-id-card' },
     { id: 'dice', label: 'Dés', icon: 'fa-dice-d20' },
     { id: 'map', label: 'Carte', icon: 'fa-map-location-dot' },
+    { id: 'combat', label: 'Combat', icon: 'fa-shield-halved' },
     { id: 'scenes', label: 'Scènes', icon: 'fa-clapperboard' },
     { id: 'chat', label: 'Messages', icon: 'fa-comments' },
     { id: 'docs', label: 'Documents', icon: 'fa-folder-open' },
@@ -40,10 +45,11 @@ let rt = null; // état d'exécution (non sauvegardé)
 export function mountGm(el, { onExit }) {
     const s = store.state;
     rt = {
-        el, onExit, tab: 'sheet', charId: s.characters[0]?.id || null, chatId: null, status: 'connecting', mapId: s.activeMapId,
+        el, onExit, tab: 'sheet', charId: aliveFirst(s.characters)[0]?.id || null, chatId: null, status: 'connecting', mapId: s.activeMapId,
         unread: {}, lastSent: new Map(), map: null, docModal: null, brush: null, brushSize: 2,
         audio: new AmbiencePlayer(async (src) => (String(src).startsWith('asset:') ? assetData(store.state, src.slice(6)) : src)),
-        dice: { charId: s.characters[0]?.id || '', mod: 0, difficulty: s.rules.dice.defaultDifficulty, label: '', isPublic: true, sides: s.rules.dice.sides },
+        dice: { charId: aliveFirst(s.characters)[0]?.id || '', mod: 0, difficulty: s.rules.dice.defaultDifficulty, label: '', isPublic: true, sides: s.rules.dice.sides, groupStat: s.rules.stats[0]?.key || '', groupAll: false },
+        lastRoll: null, lastGroup: null, pingMode: false, timerDone: false,
     };
     el.innerHTML = `<div class="gm">
         <header class="topbar">
@@ -53,6 +59,10 @@ export function mountGm(el, { onExit }) {
             <span id="gm-status" class="pill"></span>
             <span class="grow"></span>
             <span id="gm-dirty" class="pill"></span>
+            <button class="icon-btn" data-act="gm.search" title="Rechercher (Ctrl+K)"><i class="fa-solid fa-magnifying-glass"></i></button>
+            <button class="icon-btn" data-act="gm.undo" title="Annuler (Ctrl+Z)"><i class="fa-solid fa-rotate-left"></i></button>
+            <button class="icon-btn" data-act="gm.redo" title="Rétablir (Ctrl+Y)"><i class="fa-solid fa-rotate-right"></i></button>
+            <button class="icon-btn" data-act="gm.help" title="Raccourcis clavier (?)"><i class="fa-solid fa-keyboard"></i></button>
             <button class="icon-btn" data-act="gm.copyWatch" title="Copier le lien spectateur (stream / OBS)"><i class="fa-solid fa-video"></i></button>
             <button class="icon-btn" data-act="gm.mute" id="gm-mute" title="Écouter l'ambiance sur cet ordinateur"><i class="fa-solid fa-volume-high"></i></button>
             <button class="btn ghost" data-act="gm.export"><i class="fa-solid fa-floppy-disk"></i> <span class="hide-sm">Enregistrer .iris</span></button>
@@ -60,7 +70,9 @@ export function mountGm(el, { onExit }) {
         </header>
         <div class="gm-body">
             <aside class="gm-side">
-                <h5>Agents</h5><div id="gm-roster"></div>
+                <h5>Joueurs</h5><div id="gm-roster"></div>
+                <div id="gm-requests"></div>
+                <h5>Minuteur</h5><div id="gm-timer"></div>
                 <h5>Connexions <small id="gm-count"></small></h5><div id="gm-lobby"></div>
             </aside>
             <main class="gm-main"><div id="gm-tabs"></div><div id="gm-panel" class="gm-panel"></div></main>
@@ -86,8 +98,12 @@ export function mountGm(el, { onExit }) {
     });
     rt.host.start();
     // Début de session (pour le brouillon de rapport) — conservé en cas de reprise après crash.
-    if (!s.session.startedAt) { s.session.startedAt = Date.now(); store.commit('update'); }
+    if (!s.session.startedAt) { s.session.startedAt = Date.now(); s.session.startSnapshot = sessionSnapshot(s); store.commit('update'); }
+    else if (!s.session.startSnapshot) s.session.startSnapshot = sessionSnapshot(s);
     rt.unsub = store.on(onStore);
+    setSearchOpener(openFromSearch);
+    rt.tick = setInterval(tickTimer, 500);
+    rt.lobbyTick = setInterval(() => rt && renderLobby(), 4000);
     renderAll();
     syncAudio();
 }
@@ -101,6 +117,9 @@ export function unmountGm() {
     rt.unsub?.();
     rt.audio?.stop();
     rt.map?.destroy();
+    clearInterval(rt.tick);
+    clearInterval(rt.lobbyTick);
+    setSearchOpener(null);
     unmountCodex();
     rt.host?.stop();
     rt = null;
@@ -172,6 +191,40 @@ function handleClient(clientId, msg) {
                 store.commit('structure');
                 break;
             }
+            case 'rollReq': {
+                if (!me) return fail('Aucun personnage attribué.');
+                const mode = s.rules.playerRolls;
+                if (mode === 'off') return fail('Le MJ lance les dés lui-même.');
+                const st = msg.statKey ? s.rules.stats.find((x) => x.key === msg.statKey) : null;
+                if (msg.statKey && !st) return fail('Statistique inconnue.');
+                const label = String(msg.label || '').slice(0, 80);
+                if (mode === 'auto') {
+                    makeRoll(s, { charId: me.id, statKey: st?.key, mod: 0, isPublic: true, label });
+                    store.commit('structure');
+                } else {
+                    if ((s.session.rollRequests || []).filter((r) => r.charId === me.id).length >= 3) return fail('Déjà 3 demandes en attente.');
+                    s.session.rollRequests.push({ id: uid('rq'), charId: me.id, statKey: st?.key || '', label, ts: Date.now() });
+                    beep(760, 0.07);
+                    toast(`🎲 ${me.name} demande un jet${st ? ' de ' + st.label : ''}`, 'info', 5000);
+                    store.commit('structure');
+                }
+                break;
+            }
+            case 'notes': {
+                if (!me) return;
+                me.playerNotes = String(msg.text || '').slice(0, 20000);
+                store.commit('update', { scope: 'char:' + me.id, path: 'playerNotes', net: true });
+                broadcast();
+                break;
+            }
+            case 'mapPing': {
+                if (!me && rt.host.clients.get(clientId)?.role !== 'spectator') return;
+                const m = s.map;
+                if (!s.mapShared || !(Number.isFinite(msg.x) && Number.isFinite(msg.y))) return;
+                addPing(s, { x: Math.max(0, Math.min(m.width, msg.x)), y: Math.max(0, Math.min(m.height, msg.y)), by: me?.name || 'Joueur', color: me?.color || '#00e5ff', mapId: m.id });
+                store.commit('update', { scope: 'ping' });
+                break;
+            }
             case 'getAsset': {
                 const key = String(msg.key || '');
                 if (!canGetAsset(s, charId, key)) return fail('Ressource non autorisée.');
@@ -189,7 +242,8 @@ function onStore(evt) {
     if (!rt?.el.isConnected) return;
     broadcast();
     // Coup de pinceau sur le brouillard : rafraîchissement léger de la carte uniquement.
-    if (evt.type === 'update' && evt.scope?.startsWith('fog') && !evt.path) { rt.map?.update(gmMap(), store.state.characters); return; }
+    if (evt.type === 'update' && evt.scope?.startsWith('fog') && !evt.path) { rt.map?.update(mapCfg(), store.state.characters); return; }
+    if (evt.scope === 'ping') { rt.map?.update(mapCfg(), store.state.characters); return; }
     renderSide();
     renderDirty();
     renderTabs();
@@ -224,14 +278,60 @@ function renderDirty() {
 function renderSide() {
     const s = store.state;
     const online = onlineChars();
-    rerender(rt.el.querySelector('#gm-roster'), s.characters.map((c) => `
-        <button class="roster-item ${c.id === rt.charId ? 'active' : ''}" data-act="gm.pick" data-id="${c.id}">
-            ${avatarHtml(c)}<span class="grow"><b>${esc(c.name)} ${online.has(c.id) ? '<i class="dot ok" title="Connecté"></i>' : ''}</b>
+    rerender(rt.el.querySelector('#gm-roster'), aliveFirst(s.characters).map((c) => `
+        <button class="roster-item ${c.id === rt.charId ? 'active' : ''} ${deadCls(c)}" data-act="gm.pick" data-id="${c.id}">
+            ${avatarHtml(c)}<span class="grow"><b>${esc(c.name)}${deadMark(c)} ${online.has(c.id) ? '<i class="dot ok" title="Connecté"></i>' : ''}</b>
             ${hpBar(c.hp, c.hpMax)}<small>${esc(c.money)} ${esc(s.rules.currency)}${c.status ? ' · ' + esc(c.status) : ''}</small></span>
             ${rt.unread[c.id] ? `<b class="badge">${rt.unread[c.id]}</b>` : ''}
         </button>`).join('') || '<p class="muted small">Aucun personnage : ajoutez-en dans Planifier.</p>');
 
-    const opts = (sel) => `<option value="">— Non attribué —</option>` + s.characters.map((c) => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+    renderRequests();
+    renderTimerCard();
+    renderLobby();
+}
+
+function renderRequests() {
+    const s = store.state;
+    const reqs = s.session.rollRequests || [];
+    rerender(rt.el.querySelector('#gm-requests'), reqs.length ? `<h5>Demandes de jets <small>(${reqs.length})</small></h5>${reqs.map((r) => {
+        const c = findChar(s, r.charId);
+        const st = s.rules.stats.find((x) => x.key === r.statKey);
+        return `<div class="req-item">${avatarHtml(c)}<span class="grow"><b>${esc(c?.name || '?')}</b><small>${st ? esc(st.label) + ` (${esc(c?.stats[st.key] ?? 0)})` : 'jet libre'}${r.label ? ' · « ' + esc(r.label) + ' »' : ''}</small></span>
+            <button class="icon-btn ok" data-act="gm.req" data-id="${r.id}" data-how="public" title="Lancer (public)"><i class="fa-solid fa-check"></i></button>
+            <button class="icon-btn" data-act="gm.req" data-id="${r.id}" data-how="secret" title="Lancer en secret"><i class="fa-solid fa-eye-slash"></i></button>
+            <button class="icon-btn danger" data-act="gm.req" data-id="${r.id}" data-how="refuse" title="Refuser"><i class="fa-solid fa-xmark"></i></button></div>`;
+    }).join('')}` : '');
+}
+
+function renderTimerCard() {
+    const t = store.state.session.timer;
+    rerender(rt.el.querySelector('#gm-timer'), `<div class="timer-gm">
+        <div class="row"><b id="gm-timer-val" class="timer-big">${fmtClock(timerValue(t))}</b><span class="grow"></span>
+            <button class="icon-btn ${t.running ? 'ok' : ''}" data-act="gm.timerToggle" title="${t.running ? 'Pause' : 'Démarrer'}"><i class="fa-solid ${t.running ? 'fa-pause' : 'fa-play'}"></i></button>
+            <button class="icon-btn" data-act="gm.timerReset" title="Remettre à zéro"><i class="fa-solid fa-rotate"></i></button></div>
+        <input data-bind="timer|label" value="${esc(t.label)}" placeholder="Intitulé (la bombe, le rituel…)" class="mt">
+        <div class="row mt"><select data-bind="timer|mode" data-structure="1" class="grow"><option value="down" ${t.mode === 'down' ? 'selected' : ''}>Compte à rebours</option><option value="up" ${t.mode === 'up' ? 'selected' : ''}>Chrono</option></select>
+            ${t.mode === 'down' ? `<input type="number" min="0" step="0.5" value="${t.duration / 60000}" data-timermin class="w-hp" title="Durée (minutes)"><small>min</small>` : ''}</div>
+        <label class="check mt"><input type="checkbox" data-bind="timer|visible" data-structure="1" ${t.visible ? 'checked' : ''}> Visible des joueurs</label></div>`);
+}
+
+function tickTimer() {
+    if (!rt) return;
+    const t = store.state.session.timer;
+    const el = rt.el.querySelector('#gm-timer-val');
+    const v = timerValue(t);
+    if (el) { el.textContent = fmtClock(v); el.classList.toggle('urgent', t.mode === 'down' && t.running && v <= 10000); }
+    if (t.mode === 'down' && t.running && v === 0 && !rt.timerDone) {
+        rt.timerDone = true;
+        beep(220, 0.4, 'square');
+        toast(`⏰ ${t.label || 'Minuteur'} : temps écoulé !`, 'warn', 6000);
+    }
+    if (v > 0) rt.timerDone = false;
+}
+
+function renderLobby() {
+    const s = store.state;
+    const opts = (sel) => `<option value="">— Non attribué —</option>` + aliveFirst(s.characters).map((c) => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}${deadCls(c) ? ' (mort)' : ''}</option>`).join('');
     const ids = rt.host.clientIds;
     rt.el.querySelector('#gm-count').textContent = `(${ids.length})`;
     rerender(rt.el.querySelector('#gm-lobby'), ids.map((id) => {
@@ -240,7 +340,11 @@ function renderSide() {
             return `<div class="lobby-item spectator"><div class="row"><span class="grow"><i class="fa-solid fa-video"></i> ${esc(cl.name)} <small class="muted">spectateur</small></span>
                 <button class="icon-btn danger" data-act="gm.kick" data-id="${esc(id)}" title="Exclure"><i class="fa-solid fa-user-slash"></i></button></div></div>`;
         }
-        return `<div class="lobby-item"><span><i class="fa-solid fa-user"></i> ${esc(cl.name)}</span>
+        const silent = Math.round((Date.now() - cl.lastSeen) / 1000);
+        const q = silent > 9 ? ['bad', `muet depuis ${silent} s`] : cl.rtt === undefined ? ['', '…'] : cl.rtt > 400 ? ['warn', `${cl.rtt} ms`] : ['ok', `${cl.rtt} ms`];
+        return `<div class="lobby-item"><div class="row"><span class="grow"><i class="fa-solid fa-user"></i> ${esc(cl.name)}</span>
+                <small class="net ${q[0]}" title="Latence / dernier signal"><i class="fa-solid fa-signal"></i> ${q[1]}</small>
+                <button class="icon-btn" data-act="gm.resync" data-id="${esc(id)}" title="Renvoyer la vue complète (joueur bloqué)"><i class="fa-solid fa-arrows-rotate"></i></button></div>
             <div class="row"><select data-bind="assign|${esc(id)}" data-structure="1">${opts(s.session.assignments[id])}</select>
             <button class="icon-btn danger" data-act="gm.kick" data-id="${esc(id)}" title="Exclure"><i class="fa-solid fa-user-slash"></i></button></div></div>`;
     }).join('') || `<p class="muted small">Personne pour l'instant. Partagez le code <b>${esc(s.session.code)}</b>.</p>`);
@@ -282,6 +386,8 @@ function mountPanel() {
         p.innerHTML = '<div id="gm-amb"></div>';
     } else if (rt.tab === 'scenes') {
         p.innerHTML = '<div id="gm-scenes"></div>';
+    } else if (rt.tab === 'combat') {
+        p.innerHTML = '<div id="gm-combat"></div>';
     } else if (rt.tab === 'codex') {
         p.innerHTML = '<div id="cx-root" class="cx-live"></div>';
     }
@@ -309,6 +415,8 @@ function refreshPanel() {
         renderDocs();
     } else if (rt.tab === 'scenes') {
         renderScenes();
+    } else if (rt.tab === 'combat') {
+        rerender(rt.el.querySelector('#gm-combat'), combatPanelHtml(s, gmMap().id));
     } else if (rt.tab === 'codex') {
         mountCodex(rt.el.querySelector('#cx-root')); // idempotent : la navigation dans le codex n'est pas perdue
     }
@@ -356,7 +464,7 @@ function renderDiceForm() {
     rerender(rt.el.querySelector('#gm-dice-form'), `
         <h4><i class="fa-solid fa-dice-d20"></i> Lancer un dé <small class="muted">d${dice.sides} · ${dice.mode === 'under' ? 'sous la stat' : 'stat + jet vs difficulté'}</small></h4>
         <div class="grid2">
-            <label>Personnage<select data-dice="charId">${s.characters.map((x) => `<option value="${x.id}" ${x.id === d.charId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></label>
+            <label>Personnage<select data-dice="charId">${aliveFirst(s.characters).map((x) => `<option value="${x.id}" ${x.id === d.charId ? 'selected' : ''}>${esc(x.name)}${deadCls(x) ? ' (mort)' : ''}</option>`).join('')}</select></label>
             <label>Bonus / malus<div class="row"><button class="icon-btn" data-act="gm.mod" data-delta="${dice.mode === 'under' ? -10 : -1}">−</button>
                 <input type="number" data-dice="mod" value="${esc(d.mod)}" class="w-num center"><button class="icon-btn" data-act="gm.mod" data-delta="${dice.mode === 'under' ? 10 : 1}">+</button></div></label>
             ${dice.mode === 'over' ? `<label>Difficulté<input type="number" data-dice="difficulty" value="${esc(d.difficulty)}"></label>` : ''}
@@ -365,7 +473,25 @@ function renderDiceForm() {
         </div>
         <div class="stat-btns mt">${statBtns || '<p class="muted">Choisissez un personnage.</p>'}</div>
         <div class="row mt"><span class="lbl">Jet libre</span>d<input type="number" min="2" data-dice="sides" value="${esc(d.sides)}" class="w-num">
-            <button class="btn ghost" data-act="gm.roll" data-stat=""><i class="fa-solid fa-dice"></i> Lancer</button></div>`);
+            <button class="btn ghost" data-act="gm.roll" data-stat=""><i class="fa-solid fa-dice"></i> Lancer</button>
+            <button class="btn ghost" data-act="gm.reroll" title="Relancer le dernier jet (R)" ${rt.lastRoll ? '' : 'disabled'}><i class="fa-solid fa-repeat"></i></button></div>
+        <h4 class="mt"><i class="fa-solid fa-users"></i> Jet de groupe</h4>
+        <div class="row wrap"><select data-dice="groupStat" class="grow">${s.rules.stats.map((st) => `<option value="${esc(st.key)}" ${st.key === d.groupStat ? 'selected' : ''}>${esc(st.label)}</option>`).join('')}</select>
+            <label class="check" title="Sinon : seulement les joueurs connectés"><input type="checkbox" data-dice="groupAll" ${d.groupAll ? 'checked' : ''}> Tous les vivants</label>
+            <button class="btn" data-act="gm.groupRoll"><i class="fa-solid fa-dice"></i> Lancer pour le groupe</button></div>
+        ${groupHtml()}
+        <h4 class="mt"><i class="fa-solid fa-table-list"></i> Tables aléatoires</h4>
+        <div class="row wrap">${(s.tables || []).map((t) => `<button class="btn ghost sm" data-act="gm.drawTable" data-id="${t.id}" title="${t.public ? 'Résultat visible des joueurs' : 'Résultat secret'}">${t.public ? '' : '<i class="fa-solid fa-eye-slash"></i> '}${esc(t.name)}</button>`).join('') || '<span class="muted small">Créez vos tables (rencontres, butin, rumeurs…) dans Planifier › Tables aléatoires.</span>'}</div>`);
+}
+
+function groupHtml() {
+    if (!rt.lastGroup) return '';
+    const rolls = store.state.rolls.filter((r) => r.group === rt.lastGroup);
+    if (!rolls.length) return '';
+    const ok = rolls.filter((r) => r.outcome.includes('success')).length;
+    return `<table class="table mt group-table"><thead><tr><th>Joueur</th><th>Dé</th><th>Résultat</th></tr></thead><tbody>
+        ${rolls.map((r) => `<tr class="${esc(r.outcome)}"><td>${esc(r.charName)}</td><td class="mono">${esc(r.roll)} / ${esc(r.target ?? '—')}</td><td>${esc(OUTCOME_LABEL[r.outcome])}</td></tr>`).join('')}
+        </tbody></table><p class="muted small">${ok} réussite(s) sur ${rolls.length} · ${esc(rolls[0].statLabel || '')}</p>`;
 }
 
 function rollHtml(r, big = false) {
@@ -389,6 +515,13 @@ function gmMap() {
     const s = store.state;
     if (!rt || !findMap(s, rt.mapId)) { if (rt) rt.mapId = s.activeMapId; return s.map; }
     return findMap(s, rt.mapId);
+}
+
+/** Configuration passée à la carte du MJ : carte affichée + pings en cours sur celle-ci. */
+function mapCfg() {
+    const m = gmMap();
+    const now = Date.now();
+    return { ...m, pings: (store.state.session.pings || []).filter((p) => p.mapId === m.id && now - p.ts < 6000).map((p) => ({ ...p, age: now - p.ts })) };
 }
 
 function renderMap() {
@@ -415,10 +548,23 @@ function renderMap() {
                 if (!mm.fog.enabled) return;
                 if (paintFog(mm, x, y, rt.brushSize, rt.brush === 'reveal')) store.commit('update', { scope: 'fog:' + mm.id });
             },
+            onRect: (x0, y0, x1, y1) => {
+                const mm = gmMap();
+                if (mm.fog.enabled && paintRect(mm, x0, y0, x1, y1, rt.brush === 'rect-reveal')) store.commit('update', { scope: 'fog:' + mm.id });
+            },
+            onNoteMove: (id, x, y) => {
+                const n = gmMap().notes.find((k) => k.id === id);
+                if (n) { Object.assign(n, { x, y }); store.commit('update', { scope: 'map:' + gmMap().id }); }
+            },
+            onPing: (x, y) => {
+                addPing(store.state, { x, y, by: 'MJ', color: '#ffd900', mapId: gmMap().id });
+                store.commit('update', { scope: 'ping' });
+            },
         });
     }
     rt.map.setBrush(m.fog.enabled ? rt.brush : null);
-    rt.map.update(m, s.characters);
+    rt.map.setPingMode(rt.pingMode);
+    rt.map.update(mapCfg(), s.characters);
     const fog = m.fog;
     const shown = m.id === s.activeMapId;
     const brushBtn = (mode, icon, label) => `<button class="btn sm ${rt.brush === mode ? '' : 'ghost'}" data-act="gm.brush" data-mode="${mode}"><i class="fa-solid ${icon}"></i> ${label}</button>`;
@@ -430,15 +576,26 @@ function renderMap() {
         : `<button class="btn full mt" data-act="gm.showMap" data-id="${m.id}"><i class="fa-solid fa-tv"></i> Montrer cette carte aux joueurs</button>
             <p class="muted small">Les joueurs voient : <b>${esc(s.map.name)}</b> ${s.mapShared ? '(affichée)' : '(masquée)'}. Vous préparez « ${esc(m.name)} » sans qu'ils la voient.</p>`}
         <p class="muted small mt">Glissez les jetons pour déplacer personnages et PNJ en direct.</p>
+        <div class="row wrap mt">
+            <button class="btn sm ${rt.pingMode ? '' : 'ghost'}" data-act="gm.pingMode" title="Clic = signal visible par tous (ou Alt+clic) — P"><i class="fa-solid fa-location-crosshairs"></i> Ping</button>
+            <button class="btn sm ghost" data-act="gm.hpArea"><i class="fa-solid fa-burst"></i> PV de zone</button>
+            <button class="btn sm ghost" data-act="gm.undo" title="Annuler (Ctrl+Z)"><i class="fa-solid fa-rotate-left"></i> Annuler</button></div>
 
         <h4 class="mt"><i class="fa-solid fa-smog"></i> Brouillard de guerre</h4>
         <label class="check"><input type="checkbox" data-bind="fog:${m.id}|enabled" data-structure="1" ${fog.enabled ? 'checked' : ''}> Activer le brouillard</label>
         ${fog.enabled ? `<div class="row wrap mt">${brushBtn('reveal', 'fa-eye', 'Révéler')}${brushBtn('hide', 'fa-eye-slash', 'Masquer')}
+            ${brushBtn('rect-reveal', 'fa-vector-square', 'Zone +')}${brushBtn('rect-hide', 'fa-square', 'Zone −')}
             ${rt.brush ? '<button class="btn sm ghost" data-act="gm.brush" data-mode=""><i class="fa-solid fa-hand"></i> Déplacer</button>' : ''}</div>
         <div class="row mt"><span class="lbl">Pinceau</span><select data-brushsize class="w-sel">${[1, 2, 3, 5, 8].map((n) => `<option value="${n}" ${n === rt.brushSize ? 'selected' : ''}>${n} case${n > 1 ? 's' : ''}</option>`).join('')}</select>
             <span class="lbl">Case</span><input type="number" min="10" step="10" class="w-num" data-bind="fog:${m.id}|cell" data-structure="1" value="${esc(fog.cell)}" title="Taille d'une case en pixels (change la grille)"></div>
         <div class="row mt"><button class="btn ghost sm" data-act="gm.fogAll" data-reveal="1">Tout révéler</button><button class="btn ghost sm" data-act="gm.fogAll" data-reveal="0">Tout masquer</button></div>
-        <p class="muted small">${rt.brush ? 'Cliquez-glissez sur la carte pour peindre.' : 'Choisissez Révéler ou Masquer puis peignez sur la carte.'} Les PNJ sous le brouillard sont invisibles pour les joueurs.</p>` : ''}
+        <p class="muted small">${String(rt.brush).startsWith('rect') ? 'Tracez un rectangle (une pièce, un couloir…).' : rt.brush ? 'Cliquez-glissez sur la carte pour peindre.' : 'Choisissez un outil puis peignez sur la carte (F pour alterner).'} Les PNJ et lieux sous le brouillard sont invisibles pour les joueurs. Ctrl+Z annule.</p>` : ''}
+
+        <h4 class="mt"><i class="fa-solid fa-note-sticky"></i> Notes MJ <small class="muted">(jamais visibles des joueurs)</small></h4>
+        ${m.notes.map((n) => `<div class="token-row"><i class="fa-solid fa-note-sticky note-ico"></i>
+            <input data-bind="mapnote:${m.id}:${n.id}|text" value="${esc(n.text)}" class="grow" placeholder="Piège, indice, PNJ caché…">
+            <button class="icon-btn danger" data-act="gm.delNote" data-id="${n.id}" title="Supprimer"><i class="fa-solid fa-xmark"></i></button></div>`).join('')}
+        <button class="btn ghost sm mt" data-act="gm.addNote"><i class="fa-solid fa-plus"></i> Note au centre de la vue</button>
 
         <h4 class="mt"><i class="fa-solid fa-skull"></i> PNJ & ennemis</h4>
         ${m.npcs.map((n) => `<div class="token-row">${n.avatar ? avatarHtml(n) : `<span class="avatar npc" style="--c:${esc(n.color)}"><i class="fa-solid fa-skull"></i></span>`}
@@ -452,10 +609,10 @@ function renderMap() {
             <button class="btn sm"><i class="fa-solid fa-plus"></i> Poser</button></form>` : ''}
         <form class="row mt" data-submit="gm.addNpc"><input name="name" placeholder="PNJ rapide : Garde, Dragon…" required class="grow"><button class="btn sm ghost"><i class="fa-solid fa-plus"></i> PNJ</button></form>
 
-        <h4 class="mt">Agents</h4>
-        ${s.characters.map((c) => {
+        <h4 class="mt">Joueurs</h4>
+        ${aliveFirst(s.characters).map((c) => {
         const t = m.tokens[c.id];
-        return `<div class="token-row">${avatarHtml(c)}<span class="grow">${esc(c.name)}</span>
+        return `<div class="token-row ${deadCls(c)}">${avatarHtml(c)}<span class="grow">${esc(c.name)}${deadMark(c)}</span>
                 ${t ? `<label class="check" title="Visible des joueurs"><input type="checkbox" data-bind="token:${m.id}:${c.id}|visible" data-structure="1" ${t.visible !== false ? 'checked' : ''}><i class="fa-solid fa-eye"></i></label>
                 <button class="icon-btn danger" data-act="gm.untoken" data-id="${c.id}" title="Retirer de la carte"><i class="fa-solid fa-xmark"></i></button>`
         : `<button class="btn ghost sm" data-act="gm.token" data-id="${c.id}">Placer</button>`}</div>`;
@@ -467,10 +624,10 @@ function renderMap() {
 function renderChat() {
     const s = store.state;
     if (rt.chatId) rt.unread[rt.chatId] = 0;
-    rt.el.querySelector('#gm-chat-list').innerHTML = s.characters.map((c) => {
+    rt.el.querySelector('#gm-chat-list').innerHTML = aliveFirst(s.characters).map((c) => {
         const last = (s.chats[c.id] || []).slice(-1)[0];
-        return `<button class="list-item ${c.id === rt.chatId ? 'active' : ''}" data-act="gm.chatWith" data-id="${c.id}">${avatarHtml(c)}
-            <span class="grow"><b>${esc(c.name)}</b><small>${last ? esc(last.text.slice(0, 40)) : '—'}</small></span>${rt.unread[c.id] ? `<b class="badge">${rt.unread[c.id]}</b>` : ''}</button>`;
+        return `<button class="list-item ${c.id === rt.chatId ? 'active' : ''} ${deadCls(c)}" data-act="gm.chatWith" data-id="${c.id}">${avatarHtml(c)}
+            <span class="grow"><b>${esc(c.name)}${deadMark(c)}</b><small>${last ? esc(last.text.slice(0, 40)) : '—'}</small></span>${rt.unread[c.id] ? `<b class="badge">${rt.unread[c.id]}</b>` : ''}</button>`;
     }).join('');
     const msgs = rt.el.querySelector('#gm-chat-msgs');
     const c = findChar(s, rt.chatId);
@@ -551,22 +708,23 @@ registerActions({
         const s = store.state;
         const m = modal('Terminer la session', `<form class="stack" data-submit="gm.endGo">
             <p>Le fichier .iris à jour va être enregistré. Conservez-le : il servira à lancer la prochaine session.</p>
-            <label class="check"><input type="checkbox" name="draft" checked> Générer un brouillon de rapport (jets, achats, événements)</label>
+            <label class="check"><input type="checkbox" name="draft" checked> Générer un brouillon de rapport : bilan (PV, morts, objets, documents, lieux découverts) + chronologie</label>
             <label class="check"><input type="checkbox" name="next" checked> Préparer la session n°${s.meta.sessionNumber + 1}</label>
             <div class="row end"><button type="button" class="btn ghost" data-close>Annuler</button><button class="btn">Enregistrer et terminer</button></div></form>`);
         rt.endModal = m;
     },
     'gm.endGo': async (form) => {
         const s = store.state;
-        const before = { journal: s.journal.length, startedAt: s.session.startedAt, lastSession: s.session.lastSession, n: s.meta.sessionNumber };
+        const before = { journal: s.journal.length, startedAt: s.session.startedAt, lastSession: s.session.lastSession, n: s.meta.sessionNumber, snap: s.session.startSnapshot };
         if (form.draft.checked) s.journal.push(draftReport(s));
         s.session.lastSession = { startedAt: s.session.startedAt || 0, endedAt: Date.now() };
         s.session.startedAt = 0;
+        s.session.startSnapshot = null;
         if (form.next.checked) s.meta.sessionNumber += 1;
         if (!(await exportIris())) {
             // Enregistrement annulé : la session continue comme avant.
             s.journal.length = before.journal;
-            Object.assign(s.session, { startedAt: before.startedAt, lastSession: before.lastSession });
+            Object.assign(s.session, { startedAt: before.startedAt, lastSession: before.lastSession, startSnapshot: before.snap });
             s.meta.sessionNumber = before.n;
             return;
         }
@@ -589,24 +747,8 @@ registerActions({
         store.commit('structure');
     },
     'gm.mod': (el) => { rt.dice.mod = toInt(rt.dice.mod) + Number(el.dataset.delta); renderDiceForm(); },
-    'gm.roll': (el) => {
-        const s = store.state;
-        const d = rt.dice;
-        const free = !el.dataset.stat;
-        const dice = s.rules.dice;
-        let r;
-        if (free) {
-            const saved = dice.sides;
-            dice.sides = Math.max(2, toInt(d.sides, dice.sides));
-            try { r = makeRoll(s, { charId: d.charId || null, mod: d.mod, isPublic: d.isPublic, label: d.label }); } finally { dice.sides = saved; }
-        } else {
-            r = makeRoll(s, { charId: d.charId, statKey: el.dataset.stat, mod: d.mod, difficulty: d.difficulty, isPublic: d.isPublic, label: d.label });
-        }
-        beep(r.outcome.includes('success') ? 880 : r.outcome === 'raw' ? 600 : 220, 0.15, 'triangle');
-        rt.dice.mod = 0;
-        rt.dice.label = '';
-        store.commit('structure');
-    },
+    'gm.roll': (el) => doRoll(el.dataset.stat || '', { ...rt.dice }),
+    'gm.reroll': () => { if (rt.lastRoll) doRoll(rt.lastRoll.stat, rt.lastRoll.d); },
     'gm.shareMap': () => {
         const s = store.state;
         s.mapShared = !s.mapShared;
@@ -718,6 +860,7 @@ registerActions({
 
     'gm.brush': (el) => {
         rt.brush = el.dataset.mode || null;
+        rt.pingMode = false;
         renderMap();
     },
     'gm.fogAll': async (el) => {
@@ -738,4 +881,148 @@ registerActions({
         for (const m of store.state.maps) m.npcs = m.npcs.filter((n) => n.id !== el.dataset.id);
         store.commit('structure');
     },
+});
+
+
+// ---------------------------------------------------------------- Jets (commun : bouton, relance, raccourci R)
+function doRoll(stat, d) {
+    const s = store.state;
+    const dice = s.rules.dice;
+    let r;
+    if (!stat) {
+        const saved = dice.sides;
+        dice.sides = Math.max(2, toInt(d.sides, dice.sides));
+        try { r = makeRoll(s, { charId: d.charId || null, mod: d.mod, isPublic: d.isPublic, label: d.label }); } finally { dice.sides = saved; }
+    } else {
+        r = makeRoll(s, { charId: d.charId, statKey: stat, mod: d.mod, difficulty: d.difficulty, isPublic: d.isPublic, label: d.label });
+    }
+    rt.lastRoll = { stat, d: { ...d } };
+    beep(r.outcome.includes('success') ? 880 : r.outcome === 'raw' ? 600 : 220, 0.15, 'triangle');
+    rt.dice.mod = 0;
+    rt.dice.label = '';
+    store.commit('structure');
+    return r;
+}
+
+/** Ouverture d'un résultat de recherche (Ctrl+K) dans la vue MJ. */
+function openFromSearch(it) {
+    if (!rt) return;
+    const s = store.state;
+    const go = (tab) => { rt.tab = tab; renderTabs(); mountPanel(); };
+    if (it.kind === 'char') { rt.charId = it.id; rt.dice.charId = it.id; go('sheet'); renderSide(); }
+    else if (it.kind === 'bank') { runAction('gm.bankInfo', { dataset: { id: it.id } }); }
+    else if (it.kind === 'doc') { go('docs'); runAction('gm.editDoc', { dataset: { id: it.id } }); }
+    else if (it.kind === 'scene') go('scenes');
+    else if (it.kind === 'map' || it.kind === 'marker') {
+        rt.mapId = it.mapId || it.id;
+        go('map');
+        if (it.kind === 'marker') {
+            const m = findMap(s, rt.mapId);
+            const k = m?.markers[Number(it.id.split(':')[1])];
+            if (k && rt.map?.map) setTimeout(() => { rt.map.map.setView([m.height - k.y, k.x], 1); rt.map.flashPing({ x: k.x, y: k.y, by: k.name, color: '#00e5ff' }); }, 300);
+        }
+    } else if (it.kind === 'shop') go('shops');
+    else if (it.kind === 'track') go('ambience');
+    else if (it.kind === 'table') go('dice');
+    else if (it.kind === 'lore') { showCodexPage(it.id); go('codex'); }
+}
+
+const GM_ACTIONS = {
+    'gm.search': () => openSearch(),
+    'gm.undo': () => undo(),
+    'gm.redo': () => redo(),
+    'gm.help': () => modal('Raccourcis clavier', `<table class="table">
+        <tr><td><kbd>1</kbd>…<kbd>9</kbd></td><td>Sélectionner le joueur n° (liste de gauche)</td></tr>
+        <tr><td><kbd>R</kbd></td><td>Relancer le dernier jet</td></tr>
+        <tr><td><kbd>N</kbd> / <kbd>Maj</kbd>+<kbd>N</kbd></td><td>Tour suivant / précédent (combat)</td></tr>
+        <tr><td><kbd>F</kbd></td><td>Brouillard : Révéler → Masquer → Zone + → Zone − → Déplacer</td></tr>
+        <tr><td><kbd>P</kbd></td><td>Mode ping sur la carte (ou <kbd>Alt</kbd>+clic)</td></tr>
+        <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>Rechercher partout</td></tr>
+        <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Annuler / rétablir</td></tr>
+        <tr><td><kbd>?</kbd></td><td>Cette aide</td></tr></table>`),
+    'gm.req': (el) => {
+        const s = store.state;
+        const r = s.session.rollRequests.find((x) => x.id === el.dataset.id);
+        if (!r) return;
+        s.session.rollRequests = s.session.rollRequests.filter((x) => x !== r);
+        const id = Object.keys(s.session.assignments).find((k) => s.session.assignments[k] === r.charId);
+        if (el.dataset.how === 'refuse') {
+            if (id) rt.host.send(id, { t: 'error', text: 'Le MJ a refusé ce jet.' });
+        } else {
+            const roll = makeRoll(s, { charId: r.charId, statKey: r.statKey || null, mod: 0, difficulty: s.rules.dice.defaultDifficulty, isPublic: el.dataset.how === 'public', label: r.label });
+            if (el.dataset.how === 'secret' && id) rt.host.send(id, { t: 'info', text: 'Le MJ a lancé votre jet en secret.' });
+            beep(roll.outcome.includes('success') ? 880 : 220, 0.12, 'triangle');
+        }
+        store.commit('structure');
+    },
+    'gm.timerToggle': () => {
+        const t = store.state.session.timer;
+        if (t.running) timerPause(t);
+        else { if (t.mode === 'down' && timerValue(t) === 0) timerReset(t); timerStart(t); logEvent(store.state, `Minuteur lancé${t.label ? ' : ' + t.label : ''}`); }
+        store.commit('structure');
+    },
+    'gm.timerReset': () => { timerReset(store.state.session.timer); store.commit('structure'); },
+    'gm.resync': (el) => {
+        rt.lastSent.delete(el.dataset.id);
+        broadcast.now();
+        toast('Vue complète renvoyée.', 'ok', 1500);
+    },
+    'gm.groupRoll': () => {
+        const s = store.state;
+        const online = onlineChars();
+        const ids = aliveFirst(s.characters).filter((c) => !deadCls(c) && (rt.dice.groupAll || online.has(c.id))).map((c) => c.id);
+        if (!ids.length) throw new Error(rt.dice.groupAll ? 'Aucun personnage vivant.' : 'Aucun joueur connecté : cochez « Tous les vivants ».');
+        const { group } = groupRoll(s, ids, { statKey: rt.dice.groupStat, mod: rt.dice.mod, difficulty: rt.dice.difficulty, isPublic: rt.dice.isPublic, label: rt.dice.label || 'Jet de groupe' });
+        rt.lastGroup = group;
+        beep(600, 0.1, 'triangle');
+        store.commit('structure');
+    },
+    'gm.drawTable': (el) => {
+        const { text, roll } = drawTable(store.state, el.dataset.id);
+        toast(`🎲 ${roll.label.split(' : ')[0]} → ${text}${roll.public ? '' : ' (secret)'}`, 'info', 8000);
+        store.commit('structure');
+    },
+    'gm.pingMode': () => { rt.pingMode = !rt.pingMode; if (rt.pingMode) rt.brush = null; renderMap(); },
+    'gm.hpArea': () => { rt.hpModal = modal('Dégâts / soins de zone', hpAreaHtml(store.state, gmMap().id)); },
+    'gm.addNote': () => {
+        const m = gmMap();
+        const { x, y } = rt.map?.center() || { x: m.width / 2, y: m.height / 2 };
+        m.notes.push({ id: uid('mn'), x, y, text: '' });
+        store.commit('structure');
+    },
+    'gm.delNote': (el) => { const m = gmMap(); m.notes = m.notes.filter((n) => n.id !== el.dataset.id); store.commit('structure'); },
+};
+registerActions(GM_ACTIONS);
+
+document.addEventListener('change', (e) => {
+    if (e.target.dataset?.timermin === undefined || !rt) return;
+    const t = store.state.session.timer;
+    t.duration = Math.max(0, Number(e.target.value) || 0) * 60000;
+    store.commit('structure');
+});
+
+// Raccourcis clavier MJ (hors champ de saisie et hors modale).
+const BRUSH_CYCLE = ['reveal', 'hide', 'rect-reveal', 'rect-hide', null];
+document.addEventListener('keydown', (e) => {
+    if (!rt || e.ctrlKey || e.metaKey || e.altKey) return;
+    const a = document.activeElement;
+    if (a && (a.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName))) return;
+    if (document.querySelector('.modal-backdrop')) return;
+    const s = store.state;
+    const k = e.key;
+    if (/^[1-9]$/.test(k)) {
+        const c = aliveFirst(s.characters)[Number(k) - 1];
+        if (c) { rt.charId = c.id; rt.dice.charId = c.id; rt.chatId = c.id; renderSide(); if (['sheet', 'dice', 'chat'].includes(rt.tab)) refreshPanel(); }
+    } else if (k === 'r' || k === 'R') { if (rt.lastRoll) doRoll(rt.lastRoll.stat, rt.lastRoll.d); }
+    else if (k === 'n' || k === 'N') { if (s.combat.active) { nextTurn(s, e.shiftKey ? -1 : 1); beep(700, 0.05); store.commit('structure'); } }
+    else if (k === 'f' || k === 'F') {
+        if (rt.tab !== 'map' || !gmMap().fog.enabled) return;
+        rt.brush = BRUSH_CYCLE[(BRUSH_CYCLE.indexOf(rt.brush) + 1) % BRUSH_CYCLE.length];
+        rt.pingMode = false;
+        renderMap();
+        toast(`Outil : ${{ reveal: 'Révéler', hide: 'Masquer', 'rect-reveal': 'Zone +', 'rect-hide': 'Zone −' }[rt.brush] || 'Déplacer'}`, 'info', 1000);
+    } else if (k === 'p' || k === 'P') { if (rt.tab === 'map') GM_ACTIONS['gm.pingMode'](); }
+    else if (k === '?') GM_ACTIONS['gm.help']();
+    else return;
+    e.preventDefault();
 });

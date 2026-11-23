@@ -3,7 +3,9 @@
 import { store } from './store.js';
 import { registerActions } from './ui.js';
 import { esc, avatarHtml, pickFile, resizeImage, readDataUrl, toast, confirmBox, fmtDateTime, download, modal } from './util.js';
-import { findChar, findDoc, docKind, newDocument, findShop, findTrack, findBank, normalizeShop, normalizeShopItem, normalizeTrack } from './iris-file.js';
+import { findChar, findDoc, docKind, newDocument, findShop, findTrack, findBank, normalizeShop, normalizeShopItem, normalizeTrack, normalizeCharacter, normalizeBankEntry } from './iris-file.js';
+import { NPC_TEMPLATES, randomName } from './names.js';
+import { randomAgentCode } from './portal-data.js';
 import { randomSecret, encryptBytes, b64 } from './crypto.js';
 import { adjustMoney, addItem, logEvent } from './game.js';
 import { openDocViewer } from './docviewer.js';
@@ -86,17 +88,26 @@ export function bankEditorHtml(state, b) {
             <label>Nom<input data-bind="${S}|name" value="${esc(b.name)}"></label>
             <label>Type<input data-bind="${S}|kind" value="${esc(b.kind)}" list="bank-kinds"></label>
             <label>PV max<input type="number" data-bind="${S}|hpMax" value="${esc(b.hpMax)}"></label>
+            <label>Niveau de danger<select data-bind="${S}|danger">${['Faible', 'Modéré', 'Élevé', 'Critique'].map((d) => `<option ${b.danger === d ? 'selected' : ''}>${d}</option>`).join('')}</select></label>
+            <label class="check" title="Publiée dans le bestiaire du portail : nom, type, danger, description et portrait"><input type="checkbox" data-bind="${S}|known" ${b.known ? 'checked' : ''}> <i class="fa-solid fa-globe"></i> Connue des joueurs (portail)</label>
             <label>Couleur du jeton<input type="color" data-bind="${S}|color" data-structure="1" value="${esc(b.color)}"></label>
         </div>
     </section>
     <datalist id="bank-kinds">${BANK_KINDS.map((k) => `<option value="${esc(k)}">`).join('')}</datalist>
+    <section class="card row wrap">
+        <span class="lbl">Modèle rapide</span>
+        ${NPC_TEMPLATES.map((t) => `<button class="chip" data-act="bank.template" data-id="${b.id}" data-tpl="${t.id}" title="${esc(t.stats.replace(/\n/g, ' · '))}">${esc(t.label)}</button>`).join('')}
+        <span class="grow"></span>
+        <button class="btn ghost sm" data-act="bank.rename" data-id="${b.id}" title="Nom aléatoire adapté au type"><i class="fa-solid fa-shuffle"></i> Nom aléatoire</button>
+    </section>
     <section class="card grid2">
         <label>Caractéristiques, attaques, capacités<textarea rows="7" data-bind="${S}|stats" placeholder="Attaque : griffes 1d6&#10;Défense 40 %…">${esc(b.stats)}</textarea></label>
-        <label>Description / apparence<textarea rows="7" data-bind="${S}|desc">${esc(b.desc)}</textarea></label>
+        <label>Description / apparence <small class="muted">(visible des joueurs si publiée)</small><textarea rows="7" data-bind="${S}|desc">${esc(b.desc)}</textarea></label>
         <label class="span2">Notes MJ (motivations, secrets, répliques…)<textarea rows="4" data-bind="${S}|notes">${esc(b.notes)}</textarea></label>
     </section>
     <p class="muted small">${placed.length ? `Posé sur : ${esc([...new Set(placed)].join(', '))}` : 'Pas encore posé sur une carte.'}${b.loreId ? ' · Issu du lore importé' : ''}</p>
-    <div class="row end"><button class="btn bad" data-act="bank.delete" data-id="${b.id}"><i class="fa-solid fa-trash"></i> Supprimer cette fiche</button></div>
+    <div class="row end"><button class="btn ghost" data-act="bank.dup" data-id="${b.id}"><i class="fa-solid fa-clone"></i> Dupliquer</button>
+        <button class="btn bad" data-act="bank.delete" data-id="${b.id}"><i class="fa-solid fa-trash"></i> Supprimer cette fiche</button></div>
     </div>`;
 }
 
@@ -190,6 +201,7 @@ export function charEditorHtml(state, c, { live = false } = {}) {
 
     <section class="card grid2">
         <label>Biographie / notes visibles par le joueur<textarea rows="5" data-bind="${S}|bio">${esc(c.bio)}</textarea></label>
+        ${c.playerNotes ? `<div class="span2"><span class="lbl"><i class="fa-solid fa-book-open"></i> Carnet du joueur (écrit par lui, lecture seule)</span><p class="pre player-notes">${esc(c.playerNotes)}</p></div>` : ''}
         <label>Notes secrètes du MJ <small class="muted">(jamais envoyées au joueur)</small><textarea rows="5" data-bind="${S}|gmNotes">${esc(c.gmNotes)}</textarea></label>
     </section>
 
@@ -198,7 +210,15 @@ export function charEditorHtml(state, c, { live = false } = {}) {
         <p class="muted small">Sert à chiffrer les passages censurés qui concernent ce personnage. Le joueur la reçoit automatiquement quand il est connecté avec ce personnage. Si vous la changez, republiez le journal.</p>
         <div class="row"><input readonly value="${esc(c.secret)}" class="grow mono"><button class="btn ghost" data-act="char.regenSecret" data-id="${c.id}"><i class="fa-solid fa-rotate"></i> Régénérer</button></div>
     </section>
-    ${live ? '' : `<div class="row end"><button class="btn bad" data-act="char.delete" data-id="${c.id}"><i class="fa-solid fa-user-xmark"></i> Supprimer ce personnage</button></div>`}
+    <section class="card">
+        <h4><i class="fa-solid fa-globe"></i> Code joueur (portail)</h4>
+        <p class="muted small">À donner au joueur : sur le portail, il ouvre sa fiche, ses documents, les cartes publiées, son journal déclassifié et le bestiaire — sans session. Effectif après publication (Planifier › Portail joueurs).</p>
+        <input data-bind="${S}|portalCode" value="${esc(c.portalCode)}" class="mono code-agent" spellcheck="false" autocomplete="off">
+    </section>
+    ${live ? '' : `<div class="row end">
+        <button class="btn ghost" data-act="char.dup" data-id="${c.id}"><i class="fa-solid fa-clone"></i> Dupliquer</button>
+        <button class="btn ghost" data-act="char.export" data-id="${c.id}" title="Fichier .json réimportable dans une autre campagne"><i class="fa-solid fa-file-export"></i> Exporter</button>
+        <button class="btn bad" data-act="char.delete" data-id="${c.id}"><i class="fa-solid fa-user-xmark"></i> Supprimer ce personnage</button></div>`}
     </div>`;
 }
 
@@ -384,6 +404,65 @@ registerActions({
         }
         wrap._close();
         toast(`« ${name} » téléchargé : placez-le dans le dossier vault/ du site puis publiez.`, 'ok', 6000);
+    },
+});
+
+/** Personnage exporté seul : sans identifiants ni secrets propres à la campagne d'origine. */
+export function exportCharacter(state, c) {
+    const stats = Object.fromEntries(state.rules.stats.map((s) => [s.label, c.stats[s.key] ?? 0]));
+    const { id, secret, portalCode, loreId, docs, ...rest } = c;
+    return { format: 'iris-character', version: 1, character: { ...rest, stats, inventory: c.inventory.map(({ id: _, ...i }) => i) } };
+}
+
+/** Importe un personnage exporté : statistiques rapprochées par libellé, nouveaux identifiants. */
+export function importCharacter(state, data) {
+    if (data?.format !== 'iris-character' || !data.character) throw new Error('Ce fichier n\'est pas un personnage exporté par I.R.I.S.');
+    const src = data.character;
+    const stats = {};
+    for (const st of state.rules.stats) {
+        const k = Object.keys(src.stats || {}).find((l) => l.toLowerCase() === st.label.toLowerCase());
+        stats[st.key] = k ? Number(src.stats[k]) || 0 : (state.rules.dice.mode === 'under' ? 50 : 0);
+    }
+    const c = normalizeCharacter({ ...src, id: null, secret: null, portalCode: null, docs: [], stats }, state.rules);
+    state.characters.push(c);
+    return c;
+}
+
+registerActions({
+    'char.dup': (el) => {
+        const s = store.state;
+        const src = findChar(s, el.dataset.id);
+        if (!src) return;
+        const c = normalizeCharacter({ ...structuredClone(src), id: null, secret: null, portalCode: randomAgentCode(), loreId: '', name: `${src.name} (copie)`, inventory: src.inventory.map(({ id, ...i }) => i) }, s.rules);
+        s.characters.splice(s.characters.indexOf(src) + 1, 0, c);
+        store.commit('structure', { selectChar: c.id });
+        toast(`« ${c.name} » créé.`, 'ok');
+    },
+    'char.export': (el) => {
+        const c = findChar(store.state, el.dataset.id);
+        if (!c) return;
+        const slug = c.name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'personnage';
+        download(`${slug}.personnage.json`, JSON.stringify(exportCharacter(store.state, c), null, 2));
+    },
+    'bank.template': (el) => {
+        const b = findBank(store.state, el.dataset.id);
+        const t = NPC_TEMPLATES.find((x) => x.id === el.dataset.tpl);
+        if (!b || !t) return;
+        Object.assign(b, { kind: t.kind, color: t.color, hpMax: t.hpMax, hp: t.hpMax, stats: t.stats, desc: b.desc || t.desc });
+        if (/^PNJ \d+$/.test(b.name)) b.name = randomName(t.kind);
+        store.commit('structure');
+    },
+    'bank.rename': (el) => {
+        const b = findBank(store.state, el.dataset.id);
+        if (b) { b.name = randomName(b.kind); store.commit('structure'); }
+    },
+    'bank.dup': (el) => {
+        const s = store.state;
+        const src = findBank(s, el.dataset.id);
+        if (!src) return;
+        const b = normalizeBankEntry({ ...structuredClone(src), id: null, loreId: '', known: false, name: `${src.name} (copie)` });
+        s.bestiary.splice(s.bestiary.indexOf(src) + 1, 0, b);
+        store.commit('structure', { selectBank: b.id });
     },
 });
 

@@ -101,11 +101,11 @@ export async function renderJournal(container, entries, keys = {}) {
             if (key) { try { clear = await unsealText(seg.data, key); } catch { clear = null; } }
             if (clear !== null) {
                 span.className = 'declassified';
-                span.title = 'Passage déclassifié pour votre agent';
+                span.title = 'Passage déclassifié pour votre personnage';
                 span.textContent = clear;
             } else {
                 span.className = 'redacted';
-                span.title = 'Passage classifié — accès réservé à un agent précis (connectez-vous en session)';
+                span.title = 'Passage classifié — accès réservé à un joueur précis (connectez-vous en session)';
                 // Longueur approximative, pour l'effet "barre noire" — le contenu réel n'est pas dans la page.
                 span.textContent = '█'.repeat(Math.max(6, Math.min(60, Math.round(seg.data.length / 12))));
             }

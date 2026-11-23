@@ -29,6 +29,28 @@ export function isRevealed(map, x, y) {
     return !!get(decode(map), cy * cols + cx);
 }
 
+/**
+ * Rectangle (pixels image) englobant toutes les cases révélées : { x0, y0, x1, y1 }.
+ * null si le brouillard est désactivé ou si rien n'est révélé.
+ */
+export function revealedBounds(map) {
+    if (!map.fog?.enabled) return null;
+    const { cell, cols, rows } = fogDims(map);
+    const bits = decode(map);
+    let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+    for (let j = 0; j < rows; j++) {
+        for (let i = 0; i < cols; i++) {
+            if (!get(bits, j * cols + i)) continue;
+            if (i < x0) x0 = i;
+            if (i > x1) x1 = i;
+            if (j < y0) y0 = j;
+            if (j > y1) y1 = j;
+        }
+    }
+    if (x1 < 0) return null;
+    return { x0: x0 * cell, y0: y0 * cell, x1: Math.min(map.width, (x1 + 1) * cell), y1: Math.min(map.height, (y1 + 1) * cell) };
+}
+
 /** Pinceau circulaire de `radius` cases autour de (x, y). Retourne true si quelque chose a changé. */
 export function paintFog(map, x, y, radius, reveal) {
     const { cell, cols, rows } = fogDims(map);
@@ -43,6 +65,21 @@ export function paintFog(map, x, y, radius, reveal) {
             const k = j * cols + i;
             if (get(bits, k) !== (reveal ? 1 : 0)) { set(bits, k, reveal); changed = true; }
         }
+    }
+    if (changed) map.fog.revealed = b64.encode(bits);
+    return changed;
+}
+
+/** Révèle / masque toutes les cases d'un rectangle (pixels image). Retourne true si quelque chose a changé. */
+export function paintRect(map, x0, y0, x1, y1, reveal) {
+    const { cell, cols, rows } = fogDims(map);
+    const bits = decode(map);
+    const i0 = Math.max(0, Math.floor(Math.min(x0, x1) / cell)), i1 = Math.min(cols - 1, Math.floor(Math.max(x0, x1) / cell));
+    const j0 = Math.max(0, Math.floor(Math.min(y0, y1) / cell)), j1 = Math.min(rows - 1, Math.floor(Math.max(y0, y1) / cell));
+    let changed = false;
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+        const k = j * cols + i;
+        if (get(bits, k) !== (reveal ? 1 : 0)) { set(bits, k, reveal); changed = true; }
     }
     if (changed) map.fog.revealed = b64.encode(bits);
     return changed;

@@ -3,6 +3,7 @@
 // quand on ajoute des fonctionnalités (pensez à incrémenter FORMAT_VERSION + migrer).
 import { uid, randomCode } from './util.js';
 import { randomSecret } from './crypto.js';
+import { randomAgentCode } from './portal-data.js';
 
 export const FORMAT_VERSION = 2;
 
@@ -28,7 +29,7 @@ export function newCampaign() {
     });
 }
 
-export function newCharacter(state, name = 'Nouvel agent') {
+export function newCharacter(state, name = 'Nouveau personnage') {
     const stats = {};
     for (const s of state.rules.stats) stats[s.key] = state.rules.dice.mode === 'under' ? 50 : 0;
     return normalizeCharacter({
@@ -52,7 +53,7 @@ export function normalizeCharacter(c = {}, rules) {
     for (const s of rules?.stats || []) if (!(s.key in stats)) stats[s.key] = 0;
     return {
         id: c.id || uid('c'),
-        name: c.name || 'Agent',
+        name: c.name || 'Personnage',
         player: c.player || '',
         avatar: c.avatar || '',
         color: c.color || '#ffd900',
@@ -68,6 +69,8 @@ export function normalizeCharacter(c = {}, rules) {
         gmNotes: c.gmNotes || '',
         secret: c.secret || randomSecret(),
         loreId: c.loreId || '',  // fiche d'origine dans le .lore importé
+        playerNotes: c.playerNotes || '', // carnet du joueur (écrit par lui en session)
+        portalCode: c.portalCode || randomAgentCode(), // code agent : accès au portail sans session
     };
 }
 
@@ -81,6 +84,7 @@ export function normalizeDocument(d = {}) {
         text: d.text || '',      // document texte rédigé directement dans l'appli
         desc: d.desc || '',
         public: !!d.public,      // accessible à tous les joueurs
+        vaultKey: d.vaultKey || randomSecret(24), // clé du fichier chiffré publié dans vault/docs/
     };
 }
 
@@ -123,6 +127,8 @@ export function normalizeBankEntry(b = {}) {
         desc: b.desc || '',
         notes: b.notes || '',
         loreId: b.loreId || '',
+        danger: b.danger || 'Modéré',   // Faible | Modéré | Élevé | Critique (portail)
+        known: !!b.known,               // connu des agents : publié dans le bestiaire du portail
     };
 }
 
@@ -142,7 +148,36 @@ export function normalizeScene(sc = {}) {
         npcs: Array.isArray(sc.npcs) ? [...sc.npcs] : [],               // fiches de la banque posées (masquées) sur la carte
         shopIds: Array.isArray(sc.shopIds) ? [...sc.shopIds] : [],      // boutiques ouvertes au lancement
         codex: Array.isArray(sc.codex) ? [...sc.codex] : [],            // pages du codex liées
+        loreId: sc.loreId || '',                                      // page Amsel (export .lore)
         done: !!sc.done,
+    };
+}
+
+/** Table aléatoire : une entrée par ligne, « 3x texte » = poids 3. */
+export function normalizeTable(t = {}) {
+    return { id: t.id || uid('t'), name: t.name || 'Nouvelle table', entries: t.entries || '', public: !!t.public };
+}
+
+/** Combat : ordre d'initiative et tour en cours. */
+export function normalizeCombat(c = {}) {
+    return {
+        active: !!c?.active,
+        round: Math.max(1, num(c?.round, 1)),
+        turn: Math.max(0, num(c?.turn, 0)),
+        order: (c?.order || []).map((o) => ({ id: o.id || uid('co'), ref: o.ref || '', kind: o.kind === 'npc' ? 'npc' : 'char', name: o.name || '?', init: num(o.init, 0) })),
+    };
+}
+
+/** Minuteur / chrono affiché aux joueurs. */
+export function normalizeTimer(t = {}) {
+    return {
+        label: t?.label || '',
+        mode: t?.mode === 'up' ? 'up' : 'down',
+        duration: Math.max(0, num(t?.duration, 300000)), // compte à rebours (ms)
+        running: !!t?.running,
+        anchor: num(t?.anchor, 0),                       // horodatage de (re)démarrage
+        acc: Math.max(0, num(t?.acc, 0)),                // temps écoulé avant la dernière pause (ms)
+        visible: t?.visible !== false,
     };
 }
 
@@ -157,7 +192,10 @@ export function normalizeMap(m = {}, i = 0) {
         tokens: { ...(m.tokens || {}) },
         npcs: (m.npcs || []).map(normalizeNpc),
         fog: { enabled: !!m.fog?.enabled, cell: Math.max(10, num(m.fog?.cell, 50)), revealed: m.fog?.revealed || '' },
+        notes: (m.notes || []).map((n) => ({ id: n.id || uid('mn'), x: num(n.x, 0), y: num(n.y, 0), text: n.text || '' })), // notes MJ épinglées (jamais envoyées)
         loreId: m.loreId || '',
+        portal: !!m.portal,               // publiée sur le portail (brouillard appliqué)
+        vaultKey: m.vaultKey || randomSecret(24),
     };
 }
 
@@ -190,6 +228,8 @@ export function normalize(raw = {}) {
         currency: rulesIn.currency || 'Crédits',
         partyHpVisible: rulesIn.partyHpVisible !== false,
         fieldPresets: Array.isArray(rulesIn.fieldPresets) ? rulesIn.fieldPresets.map(String).filter(Boolean) : [], // champs d'identité proposés à chaque fiche
+        playerRolls: ['off', 'auto', 'validate'].includes(rulesIn.playerRolls) ? rulesIn.playerRolls : 'validate', // les joueurs lancent leurs dés
+        initStat: rulesIn.initStat || '',  // statistique ajoutée à l'initiative (vide = d20 seul)
     };
     // v1 : une seule carte dans `map` → v2 : `maps[]` + carte active.
     const mapsIn = Array.isArray(raw.maps) && raw.maps.length ? raw.maps : [raw.map || {}];
@@ -207,6 +247,7 @@ export function normalize(raw = {}) {
         gm: {
             name: raw.gm?.name || 'MJ',
             discordIds: (raw.gm?.discordIds || []).map(String).filter(Boolean),
+            legacySheetUrl: raw.gm?.legacySheetUrl || '', // ancienne Google Sheet (CSV type,code,url) : codes des archives vault/
         },
         rules,
         characters: [],
@@ -215,15 +256,18 @@ export function normalize(raw = {}) {
         activeMapId: maps.some((m) => m.id === raw.activeMapId) ? raw.activeMapId : maps[0].id, // carte montrée aux joueurs
         mapShared: raw.mapShared ?? !!raw.map?.shared,
         bestiary: (raw.bestiary || []).map(normalizeBankEntry),
+        tables: (raw.tables || []).map(normalizeTable),
+        combat: normalizeCombat(raw.combat),
         scenes: (raw.scenes || []).map(normalizeScene),
         lore: normalizeLore(raw.lore),
+        portal: { salt: raw.portal?.salt || randomSecret(24), publishedAt: num(raw.portal?.publishedAt, 0) }, // publication du portail joueurs
         shops: (raw.shops || []).map(normalizeShop),
         ambience: { tracks: (raw.ambience?.tracks || []).map(normalizeTrack), music: null, sfx: null },
         log: Array.isArray(raw.log) ? raw.log : [],
         chats: { ...(raw.chats || {}) },
         ledger: Array.isArray(raw.ledger) ? raw.ledger : [],
         rolls: Array.isArray(raw.rolls) ? raw.rolls : [],
-        journal: (raw.journal || []).map((j) => ({ id: j.id || uid('j'), date: j.date || '', title: j.title || '', tags: j.tags || [], content: typeof j.content === 'string' ? j.content : '' })),
+        journal: (raw.journal || []).map((j) => ({ id: j.id || uid('j'), date: j.date || '', title: j.title || '', tags: j.tags || [], content: typeof j.content === 'string' ? j.content : '', loreId: j.loreId || '' })),
         session: {
             code: raw.session?.code || randomCode(),
             assignments: { ...(raw.session?.assignments || {}) }, // clientId -> characterId
@@ -231,6 +275,10 @@ export function normalize(raw = {}) {
             startedAt: num(raw.session?.startedAt, 0),          // début de la session en cours (brouillon de rapport)
             lastSession: raw.session?.lastSession || null,       // { startedAt, endedAt } de la précédente
             sceneId: raw.session?.sceneId || '',                 // scène en cours
+            timer: normalizeTimer(raw.session?.timer),
+            startSnapshot: raw.session?.startSnapshot || null,   // état au début de la session (bilan de fin)
+            pings: [],                                           // signaux sur la carte (éphémères)
+            rollRequests: [],                                    // jets demandés par les joueurs (éphémères)
         },
     };
     state.characters = (raw.characters || []).map((c) => normalizeCharacter(c, rules));
@@ -260,7 +308,7 @@ export function serialize(state) {
     const out = {
         ...state,
         meta: { ...state.meta, updatedAt: Date.now() },
-        session: { ...state.session, spotlight: null },
+        session: { ...state.session, spotlight: null, pings: [], rollRequests: [] },
         ambience: { tracks: state.ambience.tracks, music: null, sfx: null },
     };
     return JSON.stringify(out, null, 2);
@@ -286,6 +334,7 @@ export const findDoc = (state, id) => state.documents.find((d) => d.id === id);
 export const findShop = (state, id) => state.shops.find((s) => s.id === id);
 export const findTrack = (state, id) => state.ambience.tracks.find((t) => t.id === id);
 export const findMap = (state, id) => state.maps.find((m) => m.id === id);
+export const findTable = (state, id) => state.tables.find((t) => t.id === id);
 export const findBank = (state, id) => state.bestiary.find((b) => b.id === id);
 export const findScene = (state, id) => state.scenes.find((x) => x.id === id);
 export const findNpc = (state, id) => { for (const m of state.maps) { const n = m.npcs.find((x) => x.id === id); if (n) return n; } return null; };
